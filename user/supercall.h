@@ -556,4 +556,33 @@ static inline long __sc_test(const char *key, long a1, long a2, long a3)
     return ret;
 }
 
+/**
+ * @brief Set UTS namespace strings (kernel version, build info).
+ *
+ * @param key     : superkey
+ * @param release : release string for uname -r (NULL to skip)
+ * @param version : version string for uname -v (NULL to skip)
+ * @return long   : 0 on success, negative errno on failure
+ */
+static inline long sc_uts_set(const char *key,
+                               const char *release,
+                               const char *version)
+{
+    if (!key || !key[0]) return -EINVAL;
+    return syscall(__NR_supercall, key, ver_and_cmd(key, SUPERCALL_UTS_SET),
+                   release, version);
+}
+
+/**
+ * @brief Reset UTS namespace strings to their original values.
+ *
+ * @param key : superkey
+ * @return long : 0 on success, negative errno on failure
+ */
+static inline long sc_uts_reset(const char *key)
+{
+    if (!key || !key[0]) return -EINVAL;
+    return syscall(__NR_supercall, key, ver_and_cmd(key, SUPERCALL_UTS_RESET));
+}
+
 #endif

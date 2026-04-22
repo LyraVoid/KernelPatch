@@ -39,6 +39,10 @@
 
 #include <linux/umh.h>
 
+extern long call_uts_set(const char __user *u_release,
+                         const char __user *u_version);
+extern long call_uts_reset(void);
+
 static long call_test(long arg1, long arg2, long arg3)
 {
     return 0;
@@ -354,6 +358,14 @@ static long supercall(int is_key_auth, long cmd, long arg1, long arg2, long arg3
     case SUPERCALL_SKEY_ROOT_ENABLE:
         return call_skey_root_enable((int)arg1);
         break;
+    }
+
+    switch (cmd) {
+    case SUPERCALL_UTS_SET:
+        return call_uts_set((const char __user *)arg1,
+                            (const char __user *)arg2);
+    case SUPERCALL_UTS_RESET:
+        return call_uts_reset();
     }
 
     switch (cmd) {
