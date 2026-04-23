@@ -38,6 +38,8 @@
 #include <uapi/linux/limits.h>
 #include <predata.h>
 #include <kstorage.h>
+#include <linux/pid.h>
+#include <asm/atomic.h>
 
 const char sh_path[] = SH_PATH;
 const char default_su_path[] = SU_PATH;
@@ -51,6 +53,10 @@ static const char *current_su_path = 0;
 
 static int su_kstorage_gid = -1;
 static int exclude_kstorage_gid = -1;
+static int audit_kstorage_gid = -1;
+static atomic64_t audit_counter = ATOMIC64_INIT(0);
+
+#define SU_AUDIT_MAX_ENTRIES 256
 
 int is_su_allow_uid(uid_t uid)
 {
@@ -188,6 +194,100 @@ const char *su_get_path()
 }
 KP_EXPORT_SYMBOL(su_get_path);
 
+void su_audit_record(uid_t uid, pid_t pid, pid_t tgid, uid_t to_uid, const char *sctx, const char *comm)
+{
+    if (audit_kstorage_gid < 0) return;
+    if (uid == 0) return;
+
+    long did = atomic64_inc_return(&audit_counter);
+
+    struct su_audit_entry entry = {0};
+    entry.timestamp = (u64)did;
+    entry.uid = uid;
+    entry.pid = pid;
+    entry.tgid = tgid;
+    entry.to_uid = to_uid;
+    if (sctx) memcpy(entry.scontext, sctx, SUPERCALL_SCONTEXT_LEN);
+    if (comm) memcpy(entry.comm, comm, TASK_COMM_LEN);
+
+    write_kstorage(audit_kstorage_gid, did, &entry, 0, sizeof(struct su_audit_entry), false);
+
+    // Trim oldest entries beyond max
+    int count = kstorage_group_size(audit_kstorage_gid);
+    if (count > SU_AUDIT_MAX_ENTRIES) {
+        int to_remove = count - SU_AUDIT_MAX_ENTRIES;
+        long *ids = (long *)vmalloc(count * sizeof(long));
+        if (!ids) return;
+        int num = list_kstorage_ids(audit_kstorage_gid, ids, count, false);
+        // ids are in newest-first order; remove from the tail (oldest)
+        for (int i = 0; i < to_remove && i < num; i++) {
+            remove_kstorage(audit_kstorage_gid, ids[num - 1 - i]);
+        }
+        vfree(ids);
+    }
+}
+KP_EXPORT_SYMBOL(su_audit_record);
+
+int su_audit_nums()
+{
+    if (audit_kstorage_gid < 0) return 0;
+    return kstorage_group_size(audit_kstorage_gid);
+}
+KP_EXPORT_SYMBOL(su_audit_nums);
+
+static int audit_list_cb(struct kstorage *kstorage, void *udata)
+{
+    struct {
+        int is_user;
+        struct su_audit_entry *out_entries;
+        int idx;
+        int out_num;
+    } *up = (typeof(up))udata;
+
+    if (up->idx >= up->out_num) return -ENOBUFS;
+
+    struct su_audit_entry *entry = (struct su_audit_entry *)kstorage->data;
+    if (up->is_user) {
+        int cprc = compat_copy_to_user(up->out_entries + up->idx, entry, sizeof(struct su_audit_entry));
+        if (cprc <= 0) return cprc;
+    } else {
+        memcpy(up->out_entries + up->idx, entry, sizeof(struct su_audit_entry));
+    }
+    up->idx++;
+    return 0;
+}
+
+int su_audit_list(int is_user, struct su_audit_entry *out_entries, int out_num)
+{
+    if (audit_kstorage_gid < 0) return 0;
+    struct {
+        int iu;
+        struct su_audit_entry *ep;
+        int idx;
+        int out_num;
+    } udata = { is_user, out_entries, 0, out_num };
+    on_each_kstorage_elem(audit_kstorage_gid, audit_list_cb, &udata);
+    return udata.idx;
+}
+KP_EXPORT_SYMBOL(su_audit_list);
+
+int su_audit_clear()
+{
+    if (audit_kstorage_gid < 0) return 0;
+    int count = kstorage_group_size(audit_kstorage_gid);
+    if (count <= 0) return 0;
+    long *ids = (long *)vmalloc(count * sizeof(long));
+    if (!ids) return -ENOMEM;
+    int num = list_kstorage_ids(audit_kstorage_gid, ids, count, false);
+    for (int i = 0; i < num; i++) {
+        remove_kstorage(audit_kstorage_gid, ids[i]);
+    }
+    vfree(ids);
+    atomic64_set(&audit_counter, 0);
+    return num;
+}
+KP_EXPORT_SYMBOL(su_audit_clear);
+
 static void handle_before_execve(char **__user u_filename_p, char **__user uargv, void *udata)
 {
     char __user *ufilename = *u_filename_p;
@@ -203,6 +303,7 @@ static void handle_before_execve(char **__user u_filename_p, char **__user uargv
         uid_t to_uid = profile.to_uid;
         const char *sctx = profile.scontext;
         commit_su(to_uid, sctx);
+        su_audit_record(uid, __task_pid_nr_ns(current, PIDTYPE_PID, 0), __task_pid_nr_ns(current, PIDTYPE_TGID, 0), to_uid, sctx, get_task_comm(current));
 
 #ifdef ANDROID
         struct file *filp = filp_open(apd_path, O_RDONLY, 0);
@@ -364,6 +465,9 @@ int su_compat_init()
 
     exclude_kstorage_gid = try_alloc_kstroage_group();
     if (exclude_kstorage_gid != KSTORAGE_EXCLUDE_LIST_GROUP) return -ENOMEM;
+
+    audit_kstorage_gid = try_alloc_kstroage_group();
+    if (audit_kstorage_gid != KSTORAGE_SU_AUDIT_GROUP) return -ENOMEM;
 
 #ifdef ANDROID
     // default shell

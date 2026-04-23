@@ -36,4 +36,9 @@ int get_ap_mod_exclude(uid_t uid);
 int set_ap_mod_exclude(uid_t uid, int exclude);
 int list_ap_mod_exclude(uid_t *uids, int len);
 
+int su_audit_nums();
+int su_audit_list(int is_user, struct su_audit_entry *out_entries, int out_num);
+int su_audit_clear();
+void su_audit_record(uid_t uid, pid_t pid, pid_t tgid, uid_t to_uid, const char *sctx, const char *comm);
+
 #endif

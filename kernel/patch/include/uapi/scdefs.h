@@ -62,7 +62,7 @@ struct kernel_storage
 
 #define KSTORAGE_SU_LIST_GROUP 0
 #define KSTORAGE_EXCLUDE_LIST_GROUP 1
-#define KSTORAGE_UNUSED_GROUP_2 2
+#define KSTORAGE_SU_AUDIT_GROUP 2
 #define KSTORAGE_UNUSED_GROUP_3 3
 
 #define SUPERCALL_BOOTLOG 0x10fd
@@ -77,6 +77,23 @@ struct su_profile
     uid_t uid;
     uid_t to_uid;
     char scontext[SUPERCALL_SCONTEXT_LEN];
+};
+
+#define SU_AUDIT_CMD_MAX_LEN 128
+
+#ifndef TASK_COMM_LEN
+#define TASK_COMM_LEN 16
+#endif
+
+struct su_audit_entry
+{
+    u64 timestamp;
+    uid_t uid;
+    pid_t pid;
+    pid_t tgid;
+    uid_t to_uid;
+    char scontext[SUPERCALL_SCONTEXT_LEN];
+    char comm[TASK_COMM_LEN];
 };
 
 #ifdef ANDROID
@@ -114,7 +131,8 @@ struct su_profile
 #define SUPERCALL_SU_RESET_PATH 0x1111
 #define SUPERCALL_SU_GET_SAFEMODE 0x1112
 
-
+#define SUPERCALL_SU_AUDIT_LIST 0x1120
+#define SUPERCALL_SU_AUDIT_CLEAR 0x1121
 
 #define SUPERCALL_MAX 0x1200
 

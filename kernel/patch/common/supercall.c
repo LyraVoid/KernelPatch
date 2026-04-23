@@ -31,6 +31,7 @@
 #include <sucompat.h>
 #include <accctl.h>
 #include <kstorage.h>
+#include <linux/vmalloc.h>
 #ifdef ANDROID
 #include <userd.h>
 #endif
@@ -140,6 +141,13 @@ static long call_su(struct su_profile *__user uprofile)
     if (!profile || IS_ERR(profile)) return PTR_ERR(profile);
     profile->scontext[sizeof(profile->scontext) - 1] = '\0';
     int rc = commit_su(profile->to_uid, profile->scontext);
+    if (!rc) {
+        su_audit_record(current_uid(),
+                        __task_pid_nr_ns(current, PIDTYPE_PID, 0),
+                        __task_pid_nr_ns(current, PIDTYPE_TGID, 0),
+                        profile->to_uid, profile->scontext,
+                        get_task_comm(current));
+    }
     kvfree(profile);
     return rc;
 }
@@ -150,6 +158,18 @@ static long call_su_task(pid_t pid, struct su_profile *__user uprofile)
     if (!profile || IS_ERR(profile)) return PTR_ERR(profile);
     profile->scontext[sizeof(profile->scontext) - 1] = '\0';
     int rc = task_su(pid, profile->to_uid, profile->scontext);
+    if (!rc) {
+        struct task_struct *task = find_get_task_by_vpid(pid);
+        if (task) {
+            struct cred *cred = *(struct cred **)((uintptr_t)task + task_struct_offset.cred_offset);
+            uid_t tuid = *(uid_t *)((uintptr_t)cred + cred_offset.uid_offset);
+            su_audit_record(tuid,
+                            __task_pid_nr_ns(task, PIDTYPE_PID, 0),
+                            __task_pid_nr_ns(task, PIDTYPE_TGID, 0),
+                            profile->to_uid, profile->scontext,
+                            get_task_comm(task));
+        }
+    }
     kvfree(profile);
     return rc;
 }
@@ -254,6 +274,28 @@ static long call_su_set_allow_sctx(char *__user usctx)
     return set_all_allow_sctx(buf);
 }
 
+static long call_su_audit_list(struct su_audit_entry *__user u_entries, int num)
+{
+    if (num == 0) return su_audit_nums();
+    if (num < 0 || num > 256) return -EINVAL;
+    struct su_audit_entry *entries = vmalloc(num * sizeof(struct su_audit_entry));
+    if (!entries) return -ENOMEM;
+    int count = su_audit_list(0, entries, num);
+    if (count > 0) {
+        int rc = compat_copy_to_user(u_entries, entries, count * sizeof(struct su_audit_entry));
+        vfree(entries);
+        if (rc <= 0) return rc;
+    } else {
+        vfree(entries);
+    }
+    return count;
+}
+
+static long call_su_audit_clear()
+{
+    return su_audit_clear();
+}
+
 static long call_kstorage_read(int gid, long did, void *out_data, int offset, int dlen)
 {
     return read_kstorage(gid, did, out_data, offset, dlen, true);
@@ -318,6 +360,11 @@ static long supercall(int is_key_auth, long cmd, long arg1, long arg2, long arg3
         return call_su_get_allow_sctx((char *__user)arg1, (int)arg2);
     case SUPERCALL_SU_SET_ALLOW_SCTX:
         return call_su_set_allow_sctx((char *__user)arg1);
+
+    case SUPERCALL_SU_AUDIT_LIST:
+        return call_su_audit_list((struct su_audit_entry *__user)arg1, (int)arg2);
+    case SUPERCALL_SU_AUDIT_CLEAR:
+        return call_su_audit_clear();
 
     case SUPERCALL_KSTORAGE_READ:
         return call_kstorage_read((int)arg1, (long)arg2, (void *)arg3, (int)((long)arg4 >> 32), (long)arg4 << 32 >> 32);
