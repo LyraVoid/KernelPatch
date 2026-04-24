@@ -210,19 +210,13 @@ static int resolve_path(int dfd, const char *raw, char *out, int outlen)
 
 /* ─── blocklist ops ─── */
 
-/* Check if caller UID should be filtered (returns 1 = should filter) */
+/* Check if caller should be filtered (returns 1 = should filter) */
 static int should_filter_uid(void)
 {
     if (!pathhide_uid_mode) return 1;
-    uid_t uid = current_uid();
-    bl_lock(&uid_whitelist.lock);
-    int found = 0;
-    for (int i = 0; i < uid_whitelist.count && !found; i++) {
-        if (uid_whitelist.uids[i] == (int)uid)
-            found = 1;
-    }
-    bl_unlock(&uid_whitelist.lock);
-    return found;
+    /* UID mode: filter all including root/su processes,
+       only FolkPatch exempted via is_exempt() */
+    return 1;
 }
 
 static int uid_add(int uid)
