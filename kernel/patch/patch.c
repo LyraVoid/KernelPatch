@@ -53,6 +53,7 @@ void module_init();
 void syscall_init();
 int kstorage_init();
 int su_compat_init();
+int pathhide_init(void);
 
 #ifdef ANDROID
 int android_user_init();
@@ -90,6 +91,9 @@ static void before_rest_init(hook_fargs4_t *args, void *udata)
 
     rc = resolve_pt_regs();
     log_boot("resolve_pt_regs done: %d\n", rc);
+
+    rc = pathhide_init();
+    log_boot("pathhide_init done: %d\n", rc);
 
 #ifdef ANDROID
     rc = android_sepolicy_flags_fix();

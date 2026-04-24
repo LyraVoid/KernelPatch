@@ -585,4 +585,84 @@ static inline long sc_uts_reset(const char *key)
     return syscall(__NR_supercall, key, ver_and_cmd(key, SUPERCALL_UTS_RESET));
 }
 
+/**
+ * @brief Add a path to the pathhide blocklist.
+ *
+ * @param key  : superkey
+ * @param path : absolute path to hide
+ * @return long : 0 on success, negative errno on failure
+ */
+static inline long sc_pathhide_add(const char *key, const char *path)
+{
+    if (!key || !key[0]) return -EINVAL;
+    if (!path || !path[0]) return -EINVAL;
+    return syscall(__NR_supercall, key, ver_and_cmd(key, SUPERCALL_PATHHIDE_ADD), path);
+}
+
+/**
+ * @brief Remove a path from the pathhide blocklist.
+ *
+ * @param key  : superkey
+ * @param path : path to unhide
+ * @return long : 0 on success, negative errno on failure
+ */
+static inline long sc_pathhide_remove(const char *key, const char *path)
+{
+    if (!key || !key[0]) return -EINVAL;
+    if (!path || !path[0]) return -EINVAL;
+    return syscall(__NR_supercall, key, ver_and_cmd(key, SUPERCALL_PATHHIDE_REMOVE), path);
+}
+
+/**
+ * @brief List all hidden paths (newline-separated).
+ *
+ * @param key     : superkey
+ * @param out_buf : output buffer
+ * @param outlen  : buffer length
+ * @return long   : bytes written on success, negative errno on failure
+ */
+static inline long sc_pathhide_list(const char *key, char *out_buf, int outlen)
+{
+    if (!key || !key[0]) return -EINVAL;
+    if (!out_buf || outlen <= 0) return -EINVAL;
+    return syscall(__NR_supercall, key, ver_and_cmd(key, SUPERCALL_PATHHIDE_LIST), out_buf, outlen);
+}
+
+/**
+ * @brief Clear all hidden paths.
+ *
+ * @param key : superkey
+ * @return long : 0 on success
+ */
+static inline long sc_pathhide_clear(const char *key)
+{
+    if (!key || !key[0]) return -EINVAL;
+    return syscall(__NR_supercall, key, ver_and_cmd(key, SUPERCALL_PATHHIDE_CLEAR));
+}
+
+/**
+ * @brief Enable or disable path hiding.
+ *
+ * @param key    : superkey
+ * @param enable : 1 to enable, 0 to disable
+ * @return long  : 0 on success
+ */
+static inline long sc_pathhide_enable(const char *key, int enable)
+{
+    if (!key || !key[0]) return -EINVAL;
+    return syscall(__NR_supercall, key, ver_and_cmd(key, SUPERCALL_PATHHIDE_ENABLE), (long)enable);
+}
+
+/**
+ * @brief Get pathhide status (enabled flag and path count).
+ *
+ * @param key : superkey
+ * @return long : high 32 bits = enabled (0/1), low 32 bits = path count
+ */
+static inline long sc_pathhide_status(const char *key)
+{
+    if (!key || !key[0]) return -EINVAL;
+    return syscall(__NR_supercall, key, ver_and_cmd(key, SUPERCALL_PATHHIDE_STATUS));
+}
+
 #endif

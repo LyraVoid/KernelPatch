@@ -44,6 +44,13 @@ extern long call_uts_set(const char __user *u_release,
                          const char __user *u_version);
 extern long call_uts_reset(void);
 
+extern long call_pathhide_add(const char __user *u_path);
+extern long call_pathhide_remove(const char __user *u_path);
+extern long call_pathhide_list(char __user *out_buf, int outlen);
+extern long call_pathhide_clear(void);
+extern long call_pathhide_enable(int enable);
+extern long call_pathhide_status(void);
+
 static long call_test(long arg1, long arg2, long arg3)
 {
     return 0;
@@ -413,6 +420,21 @@ static long supercall(int is_key_auth, long cmd, long arg1, long arg2, long arg3
                             (const char __user *)arg2);
     case SUPERCALL_UTS_RESET:
         return call_uts_reset();
+    }
+
+    switch (cmd) {
+    case SUPERCALL_PATHHIDE_ADD:
+        return call_pathhide_add((const char __user *)arg1);
+    case SUPERCALL_PATHHIDE_REMOVE:
+        return call_pathhide_remove((const char __user *)arg1);
+    case SUPERCALL_PATHHIDE_LIST:
+        return call_pathhide_list((char __user *)arg1, (int)arg2);
+    case SUPERCALL_PATHHIDE_CLEAR:
+        return call_pathhide_clear();
+    case SUPERCALL_PATHHIDE_ENABLE:
+        return call_pathhide_enable((int)arg1);
+    case SUPERCALL_PATHHIDE_STATUS:
+        return call_pathhide_status();
     }
 
     switch (cmd) {
