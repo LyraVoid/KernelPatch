@@ -50,6 +50,11 @@ extern long call_pathhide_list(char __user *out_buf, int outlen);
 extern long call_pathhide_clear(void);
 extern long call_pathhide_enable(int enable);
 extern long call_pathhide_status(void);
+extern long call_pathhide_uid_add(int uid);
+extern long call_pathhide_uid_remove(int uid);
+extern long call_pathhide_uid_list(char __user *out_buf, int outlen);
+extern long call_pathhide_uid_clear(void);
+extern long call_pathhide_uid_mode(int enable);
 
 static long call_test(long arg1, long arg2, long arg3)
 {
@@ -435,6 +440,16 @@ static long supercall(int is_key_auth, long cmd, long arg1, long arg2, long arg3
         return call_pathhide_enable((int)arg1);
     case SUPERCALL_PATHHIDE_STATUS:
         return call_pathhide_status();
+    case SUPERCALL_PATHHIDE_UID_ADD:
+        return call_pathhide_uid_add((int)arg1);
+    case SUPERCALL_PATHHIDE_UID_REMOVE:
+        return call_pathhide_uid_remove((int)arg1);
+    case SUPERCALL_PATHHIDE_UID_LIST:
+        return call_pathhide_uid_list((char __user *)arg1, (int)arg2);
+    case SUPERCALL_PATHHIDE_UID_CLEAR:
+        return call_pathhide_uid_clear();
+    case SUPERCALL_PATHHIDE_UID_MODE:
+        return call_pathhide_uid_mode((int)arg1);
     }
 
     switch (cmd) {

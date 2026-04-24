@@ -14,6 +14,7 @@
 #include <syscall.h>
 #include <kputils.h>
 #include <linux/uaccess.h>
+#include <linux/vmalloc.h>
 #include <pathhide.h>
 
 #define AT_FDCWD       (-100)
@@ -26,6 +27,7 @@
 #define MAX_BLOCKED    256
 #define MAX_PATH_LEN   512
 #define MAX_CPUS       16
+#define MAX_UIDS       256
 #define DIRENT_BUF_SIZE 4096
 
 /* ─── spinlock: ARM64 inline asm ─── */
@@ -58,6 +60,35 @@ static struct {
 } blocklist;
 
 static volatile int pathhide_enabled;
+
+/* ─── UID whitelist ─── */
+
+static struct {
+    int uids[MAX_UIDS];
+    int count;
+    bl_lock_t lock;
+} uid_whitelist;
+
+static volatile int pathhide_uid_mode;
+
+/* ─── exempt: caller app (FolkPatch) and root are never filtered ─── */
+
+static volatile int pathhide_app_uid = -1;
+
+static void record_caller_uid(void)
+{
+    int uid = (int)current_uid();
+    if (uid > 0)
+        pathhide_app_uid = uid;
+}
+
+static int is_exempt(void)
+{
+    int uid = (int)current_uid();
+    if (uid == pathhide_app_uid) return 1; /* FolkPatch always exempt */
+    if (!pathhide_uid_mode && uid < 10000) return 1; /* system only exempt in global mode */
+    return 0;
+}
 
 /* ─── kernel functions (resolved at runtime via kallsyms) ─── */
 
@@ -179,6 +210,57 @@ static int resolve_path(int dfd, const char *raw, char *out, int outlen)
 
 /* ─── blocklist ops ─── */
 
+/* Check if caller UID should be filtered (returns 1 = should filter) */
+static int should_filter_uid(void)
+{
+    if (!pathhide_uid_mode) return 1;
+    uid_t uid = current_uid();
+    bl_lock(&uid_whitelist.lock);
+    int found = 0;
+    for (int i = 0; i < uid_whitelist.count && !found; i++) {
+        if (uid_whitelist.uids[i] == (int)uid)
+            found = 1;
+    }
+    bl_unlock(&uid_whitelist.lock);
+    return found;
+}
+
+static int uid_add(int uid)
+{
+    bl_lock(&uid_whitelist.lock);
+    if (uid_whitelist.count >= MAX_UIDS) {
+        bl_unlock(&uid_whitelist.lock);
+        return -ENOMEM;
+    }
+    for (int i = 0; i < uid_whitelist.count; i++) {
+        if (uid_whitelist.uids[i] == uid) {
+            bl_unlock(&uid_whitelist.lock);
+            return 0;
+        }
+    }
+    uid_whitelist.uids[uid_whitelist.count++] = uid;
+    bl_unlock(&uid_whitelist.lock);
+    logkfi("pathhide: +uid %d\n", uid);
+    return 0;
+}
+
+static int uid_remove(int uid)
+{
+    bl_lock(&uid_whitelist.lock);
+    for (int i = 0; i < uid_whitelist.count; i++) {
+        if (uid_whitelist.uids[i] == uid) {
+            for (int j = i; j < uid_whitelist.count - 1; j++)
+                uid_whitelist.uids[j] = uid_whitelist.uids[j + 1];
+            uid_whitelist.count--;
+            bl_unlock(&uid_whitelist.lock);
+            logkfi("pathhide: -uid %d\n", uid);
+            return 0;
+        }
+    }
+    bl_unlock(&uid_whitelist.lock);
+    return -ENOENT;
+}
+
 static int bl_add(const char *path)
 {
     bl_lock(&blocklist.lock);
@@ -237,6 +319,29 @@ static int bl_match(const char *resolved)
     return found;
 }
 
+/* Check if a directory path could contain any hidden entries.
+ * Returns 1 if dirpath is a parent of (or equal to) any blocklist entry. */
+static int dir_may_contain_hidden(const char *dirpath)
+{
+    int dlen = (int)strlen(dirpath);
+    bl_lock(&blocklist.lock);
+    int may = 0;
+    for (int i = 0; i < blocklist.count && !may; i++) {
+        int blen = (int)strlen(blocklist.paths[i]);
+        /* dirpath is a prefix of a blocklist entry, e.g. "/data" vs "/data/foo" */
+        if (dlen < blen &&
+            strncmp(dirpath, blocklist.paths[i], dlen) == 0 &&
+            blocklist.paths[i][dlen] == '/')
+            may = 1;
+        /* dirpath exactly matches a blocklist entry */
+        else if (blen == dlen &&
+                 strncmp(dirpath, blocklist.paths[i], dlen) == 0)
+            may = 1;
+    }
+    bl_unlock(&blocklist.lock);
+    return may;
+}
+
 /* ─── before hooks: openat / faccessat / newfstatat ─── */
 
 static void check_and_block(hook_fargs4_t *args, const char *name)
@@ -244,6 +349,8 @@ static void check_and_block(hook_fargs4_t *args, const char *name)
     if (!pathhide_enabled) return;
     if (blocklist.count == 0) return;
     if (is_nested()) return;
+    if (is_exempt()) return;
+    if (!should_filter_uid()) return;
 
     set_nested(1);
 
@@ -351,6 +458,9 @@ static void before_getdents64(hook_fargs4_t *args, void *udata)
     (void)udata;
     if (!pathhide_enabled) return;
     if (blocklist.count == 0) return;
+    if (is_exempt()) return;
+
+    if (!should_filter_uid()) return;
 
     /* call original */
     orig_getdents64_t orig = (orig_getdents64_t)wrap_get_origin_func(args);
@@ -370,17 +480,25 @@ static void before_getdents64(hook_fargs4_t *args, void *udata)
     if (resolve_fd_dirpath(fd, dirpath, sizeof(dirpath)) != 0)
         return;
 
-    /* copy, filter, write back */
-    char kbuf[DIRENT_BUF_SIZE];
+    /* early exit: skip if directory cannot contain hidden entries */
+    if (!dir_may_contain_hidden(dirpath)) return;
+
+    /* heap-allocate dirent buffer to avoid ~5KB stack overflow */
+    char *kbuf = vmalloc(DIRENT_BUF_SIZE);
+    if (!kbuf) return;
+
     void __user *dirent = (void __user *)syscall_argn(args, 1);
-    if (kf_copy_from_user(kbuf, dirent, (unsigned long)ret))
+    if (kf_copy_from_user(kbuf, dirent, (unsigned long)ret)) {
+        vfree(kbuf);
         return;
+    }
 
     int new_len = filter_dirents(kbuf, ret, dirpath);
     if (new_len < ret) {
         compat_copy_to_user(dirent, kbuf, new_len);
         args->ret = (uint64_t)new_len;
     }
+    vfree(kbuf);
 }
 
 /* ─── hook handles for uninstall ─── */
@@ -417,7 +535,10 @@ int pathhide_init(void)
 
     blocklist.lock = 0;
     blocklist.count = 0;
+    uid_whitelist.lock = 0;
+    uid_whitelist.count = 0;
     pathhide_enabled = 0;
+    pathhide_uid_mode = 0;
 
     /* Install hooks (always installed, gated by pathhide_enabled flag) */
     openat_err = fp_hook_syscalln(__NR_openat, 4, before_openat, 0, 0);
@@ -487,6 +608,7 @@ long call_pathhide_clear(void)
 
 long call_pathhide_enable(int enable)
 {
+    record_caller_uid();
     pathhide_enabled = enable ? 1 : 0;
     logkfi("pathhide: %s\n", enable ? "enabled" : "disabled");
     return 0;
@@ -494,9 +616,54 @@ long call_pathhide_enable(int enable)
 
 long call_pathhide_status(void)
 {
+    record_caller_uid();
     /* return enabled status in high word, count in low word */
     bl_lock(&blocklist.lock);
     int count = blocklist.count;
     bl_unlock(&blocklist.lock);
     return ((long)pathhide_enabled << 32) | count;
+}
+
+/* ─── UID whitelist public API ─── */
+
+long call_pathhide_uid_add(int uid)
+{
+    if (uid <= 0) return -EINVAL;
+    return uid_add(uid);
+}
+
+long call_pathhide_uid_remove(int uid)
+{
+    if (uid <= 0) return -EINVAL;
+    return uid_remove(uid);
+}
+
+long call_pathhide_uid_list(char __user *out_buf, int outlen)
+{
+    if (!out_buf || outlen <= 0) return -EINVAL;
+    char buf[4096];
+    int pos = 0;
+    bl_lock(&uid_whitelist.lock);
+    for (int i = 0; i < uid_whitelist.count && pos < (int)sizeof(buf) - 16; i++)
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "%d\n", uid_whitelist.uids[i]);
+    bl_unlock(&uid_whitelist.lock);
+    int copy_len = pos < outlen ? pos : outlen;
+    compat_copy_to_user(out_buf, buf, copy_len);
+    return pos;
+}
+
+long call_pathhide_uid_clear(void)
+{
+    bl_lock(&uid_whitelist.lock);
+    uid_whitelist.count = 0;
+    bl_unlock(&uid_whitelist.lock);
+    logkfi("pathhide: cleared uid whitelist\n");
+    return 0;
+}
+
+long call_pathhide_uid_mode(int enable)
+{
+    pathhide_uid_mode = enable ? 1 : 0;
+    logkfi("pathhide: uid mode %s\n", enable ? "ON" : "OFF");
+    return 0;
 }
