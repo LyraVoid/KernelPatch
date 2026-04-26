@@ -54,6 +54,7 @@ void syscall_init();
 int kstorage_init();
 int su_compat_init();
 int pathhide_init(void);
+int netisolate_init(void);
 
 #ifdef ANDROID
 int android_user_init();
@@ -94,6 +95,9 @@ static void before_rest_init(hook_fargs4_t *args, void *udata)
 
     rc = pathhide_init();
     log_boot("pathhide_init done: %d\n", rc);
+
+    rc = netisolate_init();
+    log_boot("netisolate_init done: %d\n", rc);
 
 #ifdef ANDROID
     rc = android_sepolicy_flags_fix();

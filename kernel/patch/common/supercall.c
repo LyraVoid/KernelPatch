@@ -57,6 +57,13 @@ extern long call_pathhide_uid_clear(void);
 extern long call_pathhide_uid_mode(int enable);
 extern long call_pathhide_filter_system(int enable);
 
+extern long call_netisolate_enable(int enable);
+extern long call_netisolate_status(void);
+extern long call_netisolate_uid_add(int uid);
+extern long call_netisolate_uid_remove(int uid);
+extern long call_netisolate_uid_list(char __user *out_buf, int outlen);
+extern long call_netisolate_uid_clear(void);
+
 static long call_test(long arg1, long arg2, long arg3)
 {
     return 0;
@@ -453,6 +460,21 @@ static long supercall(int is_key_auth, long cmd, long arg1, long arg2, long arg3
         return call_pathhide_uid_mode((int)arg1);
     case SUPERCALL_PATHHIDE_FILTER_SYSTEM:
         return call_pathhide_filter_system((int)arg1);
+    }
+
+    switch (cmd) {
+    case SUPERCALL_NETISOLATE_ENABLE:
+        return call_netisolate_enable((int)arg1);
+    case SUPERCALL_NETISOLATE_STATUS:
+        return call_netisolate_status();
+    case SUPERCALL_NETISOLATE_UID_ADD:
+        return call_netisolate_uid_add((int)arg1);
+    case SUPERCALL_NETISOLATE_UID_REMOVE:
+        return call_netisolate_uid_remove((int)arg1);
+    case SUPERCALL_NETISOLATE_UID_LIST:
+        return call_netisolate_uid_list((char __user *)arg1, (int)arg2);
+    case SUPERCALL_NETISOLATE_UID_CLEAR:
+        return call_netisolate_uid_clear();
     }
 
     switch (cmd) {
