@@ -217,11 +217,11 @@ static int should_filter_uid(void)
     if (!pathhide_uid_mode) return 1;
     uid_t uid = current_uid();
 
-    /* UID mode + filter_system: also filter root/system UIDs */
-    if (pathhide_filter_system && (int)uid < 10000)
-        return 1;
+    /* UID mode: uid 0 is controlled by filter_system toggle */
+    if ((int)uid == 0)
+        return pathhide_filter_system ? 1 : 0;
 
-    /* UID mode: filter whitelisted app UIDs */
+    /* UID mode: filter only whitelisted UIDs */
     bl_lock(&uid_whitelist.lock);
     int found = 0;
     for (int i = 0; i < uid_whitelist.count && !found; i++) {
