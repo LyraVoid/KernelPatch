@@ -70,8 +70,9 @@ static struct {
 } uid_whitelist;
 
 static volatile int pathhide_uid_mode;
+static volatile int pathhide_filter_system; /* 0: system UID exempt (default), 1: filter system UID too */
 
-/* ─── exempt: caller app (FolkPatch) and root are never filtered ─── */
+/* ─── exempt logic ─── */
 
 static volatile int pathhide_app_uid = -1;
 
@@ -86,7 +87,7 @@ static int is_exempt(void)
 {
     int uid = (int)current_uid();
     if (uid == pathhide_app_uid) return 1; /* FolkPatch always exempt */
-    if (!pathhide_uid_mode && uid < 10000) return 1; /* system only exempt in global mode */
+    if (uid < 10000 && !pathhide_filter_system) return 1; /* system exempt unless toggle ON */
     return 0;
 }
 
@@ -214,9 +215,21 @@ static int resolve_path(int dfd, const char *raw, char *out, int outlen)
 static int should_filter_uid(void)
 {
     if (!pathhide_uid_mode) return 1;
-    /* UID mode: filter all including root/su processes,
-       only FolkPatch exempted via is_exempt() */
-    return 1;
+    uid_t uid = current_uid();
+
+    /* UID mode + filter_system: also filter root/system UIDs */
+    if (pathhide_filter_system && (int)uid < 10000)
+        return 1;
+
+    /* UID mode: filter whitelisted app UIDs */
+    bl_lock(&uid_whitelist.lock);
+    int found = 0;
+    for (int i = 0; i < uid_whitelist.count && !found; i++) {
+        if (uid_whitelist.uids[i] == (int)uid)
+            found = 1;
+    }
+    bl_unlock(&uid_whitelist.lock);
+    return found;
 }
 
 static int uid_add(int uid)
@@ -659,5 +672,12 @@ long call_pathhide_uid_mode(int enable)
 {
     pathhide_uid_mode = enable ? 1 : 0;
     logkfi("pathhide: uid mode %s\n", enable ? "ON" : "OFF");
+    return 0;
+}
+
+long call_pathhide_filter_system(int enable)
+{
+    pathhide_filter_system = enable ? 1 : 0;
+    logkfi("pathhide: filter system %s\n", enable ? "ON" : "OFF");
     return 0;
 }
