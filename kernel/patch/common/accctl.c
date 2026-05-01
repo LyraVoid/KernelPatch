@@ -118,10 +118,12 @@ out:
 
 int commit_su(uid_t to_uid, const char *sctx)
 {
-    if (sctx && sctx[0]) {
-        return commit_common_su(to_uid, sctx);
-    }
     if (all_allow_sid != SECSID_NULL && !to_uid) {
+        /* Custom sctx: use commit_common_su so it takes effect.
+         * Default sctx (NULL/empty/magisk): use commit_kernel_su as before. */
+        if (sctx && strcmp(sctx, "u:r:magisk:s0") != 0) {
+            return commit_common_su(to_uid, sctx);
+        }
         return commit_kernel_su();
     } else {
         return commit_common_su(to_uid, sctx);
