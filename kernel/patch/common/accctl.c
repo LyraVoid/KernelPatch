@@ -105,8 +105,9 @@ int commit_common_su(uid_t to_uid, const char *sctx)
     set_groups(new, group_info);
 
     if (sctx && sctx[0]) {
-        ext->sel_allow = !!set_security_override_from_ctx(new, sctx);
+        set_security_override_from_ctx(new, sctx);
     }
+    ext->sel_allow = 1;
     commit_creds(new);
 
 out:
@@ -117,6 +118,9 @@ out:
 
 int commit_su(uid_t to_uid, const char *sctx)
 {
+    if (sctx && sctx[0]) {
+        return commit_common_su(to_uid, sctx);
+    }
     if (all_allow_sid != SECSID_NULL && !to_uid) {
         return commit_kernel_su();
     } else {
