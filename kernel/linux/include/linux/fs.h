@@ -357,12 +357,18 @@ static inline loff_t vfs_llseek(struct file *file, loff_t offset, int whence)
     kfunc_direct_call(vfs_llseek, file, offset, whence);
 }
 
-/* Directory iteration context (kernel 3.11+).
- * Actor signature: int return (4.x) or bool return (5.0+) — both are ABI-compatible
- * on arm64 for 0/1 values, so we use the 5.0+ bool form to satisfy the compiler.
+/* Directory iteration context.
+ * Linux < 6.1 uses an int actor, while Linux 6.1+ uses a bool actor.
+ * Keep both layouts so callers can use the signature that matches the
+ * target kernel without incompatible function pointer assignments.
  */
 struct dir_context {
     bool (*actor)(struct dir_context *, const char *, int, loff_t, u64, unsigned int);
+    loff_t pos;
+};
+
+struct dir_context_int {
+    int (*actor)(struct dir_context_int *, const char *, int, loff_t, u64, unsigned int);
     loff_t pos;
 };
 
@@ -371,6 +377,13 @@ extern int kfunc_def(iterate_dir)(struct file *, struct dir_context *);
 static inline int iterate_dir(struct file *file, struct dir_context *ctx)
 {
     kfunc_call(iterate_dir, file, ctx);
+    kfunc_not_found();
+    return 0; /* symbol not resolved; caller checks result via its context */
+}
+
+static inline int iterate_dir_int(struct file *file, struct dir_context_int *ctx)
+{
+    kfunc_call(iterate_dir, file, (struct dir_context *)ctx);
     kfunc_not_found();
     return 0; /* symbol not resolved; caller checks result via its context */
 }

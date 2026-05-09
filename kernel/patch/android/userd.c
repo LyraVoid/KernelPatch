@@ -526,6 +526,15 @@ struct apk_inner_ctx {
     const char *package;
 };
 
+struct apk_inner_ctx_int {
+    struct dir_context_int dctx; /* MUST be first member for safe cast */
+    const char *outer_dir;       /* parent path, e.g. "/data/app/~~abc/" */
+    char *result;
+    size_t result_len;
+    int found;
+    const char *package;
+};
+
 static bool apk_inner_actor(struct dir_context *dctx,
                             const char *name, int namelen,
                             loff_t offset, u64 ino, unsigned int d_type)
@@ -575,12 +584,12 @@ static bool apk_inner_actor(struct dir_context *dctx,
     return false;
 }
 
-static int apk_inner_actor_int(struct dir_context *dctx,
+static int apk_inner_actor_int(struct dir_context_int *dctx,
                             const char *name, int namelen,
                             loff_t offset, u64 ino, unsigned int d_type)
 {
-    struct apk_inner_ctx *ctx =
-        container_of(dctx, struct apk_inner_ctx, dctx);
+    struct apk_inner_ctx_int *ctx =
+        container_of(dctx, struct apk_inner_ctx_int, dctx);
 
     const char *pkg;
     size_t len, outer_len, path_len;
@@ -627,6 +636,16 @@ static int apk_inner_actor_int(struct dir_context *dctx,
 /* Outer callback: scan /data/app/ for ~~* scramble directories, then descend */
 struct apk_outer_ctx {
     struct dir_context dctx; /* MUST be first member */
+    char *result;
+    size_t result_len;
+    int found;
+    char *inner_path; /* heap-allocated: "/data/app/~~<hash>/" */
+    size_t inner_path_len;
+    const char *package;
+};
+
+struct apk_outer_ctx_int {
+    struct dir_context_int dctx; /* MUST be first member */
     char *result;
     size_t result_len;
     int found;
@@ -688,17 +707,17 @@ static bool apk_outer_actor(struct dir_context *dctx,
     vfree(inner);
     return true;
 }
-/* https://elixir.bootlin.com/linux/v6.0.19/source/include/linux/fs.h#L2049
+/* https://elixir.bootlin.com/linux/v6.0.19/source/include/linux/fs.h#L2049 */
 /* Note: the return value semantics of the actor function changed in Linux 6.1:
  * true to continue iterating, false to stop -> 0 to continue, nonzero to stop.
  * We support both versions for compatibility with a wider range of kernels.
  */
-static int apk_outer_actor_int(struct dir_context *dctx,
+static int apk_outer_actor_int(struct dir_context_int *dctx,
                             const char *name, int namelen,
                             loff_t offset, u64 ino, unsigned int d_type)
 {
-    struct apk_outer_ctx *ctx = container_of(dctx, struct apk_outer_ctx, dctx);
-    struct apk_inner_ctx *inner;
+    struct apk_outer_ctx_int *ctx = container_of(dctx, struct apk_outer_ctx_int, dctx);
+    struct apk_inner_ctx_int *inner;
     struct file *inner_dir;
     int len;
 
@@ -726,18 +745,14 @@ static int apk_outer_actor_int(struct dir_context *dctx,
         return 0;
     }
     memset(inner, 0, sizeof(*inner));
-    if (kver >= VERSION(6, 1, 0)) {
-        inner->dctx.actor = apk_inner_actor;
-    } else {
-        inner->dctx.actor = apk_inner_actor_int;
-    }
+    inner->dctx.actor = apk_inner_actor_int;
     inner->dctx.pos = 0;
     inner->outer_dir = ctx->inner_path;
     inner->result = ctx->result;
     inner->result_len = ctx->result_len;
     inner->package = ctx->package;
 
-    iterate_dir(inner_dir, &inner->dctx);
+    iterate_dir_int(inner_dir, &inner->dctx);
     filp_close(inner_dir, 0);
 
     if (inner->found) {
@@ -757,7 +772,9 @@ static int find_trusted_manager_apk_path(char *apk_path,
     
     log_boot("finding apk path for package: %s\n", trusted_managers[index].package);
     struct apk_outer_ctx *outer = NULL;
+    struct apk_outer_ctx_int *outer_int = NULL;
     struct apk_inner_ctx *flat = NULL;
+    struct apk_inner_ctx_int *flat_int = NULL;
     struct file *app_dir;
     int rc = -ENOENT;
 
@@ -778,18 +795,33 @@ static int find_trusted_manager_apk_path(char *apk_path,
     pkg_buf[len] = '\0';
     apk_path[0] = '\0';
 
-    flat = vmalloc(sizeof(*flat));
-    if (!flat) { rc = -ENOMEM; goto out_free; }
+    if (kver >= VERSION(6, 1, 0)) {
+        flat = vmalloc(sizeof(*flat));
+        if (!flat) { rc = -ENOMEM; goto out_free; }
 
-    outer = vmalloc(sizeof(*outer));
-    if (!outer) { rc = -ENOMEM; goto out_free; }
+        outer = vmalloc(sizeof(*outer));
+        if (!outer) { rc = -ENOMEM; goto out_free; }
 
-    memset(flat, 0, sizeof(*flat));
-    memset(outer, 0, sizeof(*outer));
+        memset(flat, 0, sizeof(*flat));
+        memset(outer, 0, sizeof(*outer));
 
-    outer->inner_path = vmalloc(256);
-    if (!outer->inner_path) { rc = -ENOMEM; goto out_free; }
-    outer->inner_path_len = 256;
+        outer->inner_path = vmalloc(256);
+        if (!outer->inner_path) { rc = -ENOMEM; goto out_free; }
+        outer->inner_path_len = 256;
+    } else {
+        flat_int = vmalloc(sizeof(*flat_int));
+        if (!flat_int) { rc = -ENOMEM; goto out_free; }
+
+        outer_int = vmalloc(sizeof(*outer_int));
+        if (!outer_int) { rc = -ENOMEM; goto out_free; }
+
+        memset(flat_int, 0, sizeof(*flat_int));
+        memset(outer_int, 0, sizeof(*outer_int));
+
+        outer_int->inner_path = vmalloc(256);
+        if (!outer_int->inner_path) { rc = -ENOMEM; goto out_free; }
+        outer_int->inner_path_len = 256;
+    }
 
     set_priv_sel_allow(current, true);
 
@@ -803,22 +835,27 @@ static int find_trusted_manager_apk_path(char *apk_path,
     }
 
     /* ===== Pass1 ===== */
-    //flat->dctx.actor = apk_inner_actor;
     if (kver >= VERSION(6, 1, 0)) {
         flat->dctx.actor = apk_inner_actor;
+        flat->dctx.pos = 0;
+        flat->outer_dir = "/data/app/";
+        flat->result = apk_path;
+        flat->result_len = apk_path_len;
+        flat->package = pkg_buf;
+
+        iterate_dir(app_dir, &flat->dctx);
     } else {
-        flat->dctx.actor = apk_inner_actor_int;
+        flat_int->dctx.actor = apk_inner_actor_int;
+        flat_int->dctx.pos = 0;
+        flat_int->outer_dir = "/data/app/";
+        flat_int->result = apk_path;
+        flat_int->result_len = apk_path_len;
+        flat_int->package = pkg_buf;
+
+        iterate_dir_int(app_dir, &flat_int->dctx);
     }
-    // flat->dctx.actor = apk_outer_actor;
-    flat->dctx.pos = 0;
-    flat->outer_dir = "/data/app/";
-    flat->result = apk_path;
-    flat->result_len = apk_path_len;
-    flat->package = pkg_buf;
 
-    iterate_dir(app_dir, &flat->dctx);
-
-    if (flat->found) {
+    if ((flat && flat->found) || (flat_int && flat_int->found)) {
         log_boot("apk found (flat): %s\n", apk_path);
         rc = 0;
         goto out;
@@ -828,18 +865,23 @@ static int find_trusted_manager_apk_path(char *apk_path,
     vfs_llseek(app_dir, 0, SEEK_SET);
     if (kver >= VERSION(6, 1, 0)) {
         outer->dctx.actor = apk_outer_actor;
+        outer->dctx.pos = 0;
+        outer->result = apk_path;
+        outer->result_len = apk_path_len;
+        outer->package = pkg_buf;
+
+        iterate_dir(app_dir, &outer->dctx);
     } else {
-        outer->dctx.actor = apk_outer_actor_int;
+        outer_int->dctx.actor = apk_outer_actor_int;
+        outer_int->dctx.pos = 0;
+        outer_int->result = apk_path;
+        outer_int->result_len = apk_path_len;
+        outer_int->package = pkg_buf;
+
+        iterate_dir_int(app_dir, &outer_int->dctx);
     }
-    
-    outer->dctx.pos = 0;
-    outer->result = apk_path;
-    outer->result_len = apk_path_len;
-    outer->package = pkg_buf;
 
-    iterate_dir(app_dir, &outer->dctx);
-
-    if (outer->found) {
+    if ((outer && outer->found) || (outer_int && outer_int->found)) {
         log_boot("apk found (scramble): %s\n", apk_path);
         rc = 0;
         goto out;
@@ -855,7 +897,12 @@ out_free:
         if (outer->inner_path) vfree(outer->inner_path);
         vfree(outer);
     }
+    if (outer_int) {
+        if (outer_int->inner_path) vfree(outer_int->inner_path);
+        vfree(outer_int);
+    }
     if (flat) vfree(flat);
+    if (flat_int) vfree(flat_int);
     if (pkg_buf) vfree(pkg_buf);
     return rc;
 }
