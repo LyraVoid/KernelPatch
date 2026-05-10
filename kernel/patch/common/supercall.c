@@ -536,7 +536,6 @@ static void before(hook_fargs6_t *args, void *udata)
         uid_t uid = current_uid();
         if (!is_su_allow_uid(uid) && !is_trusted_manager) return;
     } else {
-        pr_info("not equal superkey: %s\n",key);
         if (!is_trusted_manager) return;
     }
 
