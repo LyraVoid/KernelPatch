@@ -519,8 +519,7 @@ static void before(hook_fargs6_t *args, void *udata)
     // uint32_t ver = (ver_xx_cmd & 0xFFFFFFFF00000000ul) >> 32;
     // long xx = (ver_xx_cmd & 0xFFFF0000) >> 16;
 
-    long cmd = ver_xx_cmd & 0xFFFF;
-    if (cmd < SUPERCALL_HELLO || cmd > SUPERCALL_MAX) return;
+    
 
     char key[MAX_KEY_LEN];
     long len = compat_strncpy_from_user(key, ukey, MAX_KEY_LEN);
@@ -541,6 +540,10 @@ static void before(hook_fargs6_t *args, void *udata)
     } else {
         if (!is_trusted_manager) return;
     }
+
+    long cmd = ver_xx_cmd & 0xFFFF;
+    if (cmd < SUPERCALL_HELLO || cmd > SUPERCALL_MAX) return;
+
 
     long a1 = (long)syscall_argn(args, 2);
     long a2 = (long)syscall_argn(args, 3);
