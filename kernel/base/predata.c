@@ -107,6 +107,7 @@ int has_preset_superkey()
 {
     return start_preset.superkey[0] == '\0';
 }
+
 void predata_init()
 {
     superkey = (char *)start_preset.superkey;
