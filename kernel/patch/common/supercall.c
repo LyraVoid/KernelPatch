@@ -551,13 +551,6 @@ static void before(hook_fargs6_t *args, void *udata)
 
     // pr_info("[supercall] is_trusted_caller=%d", is_trusted_caller);
     if (!is_trusted_caller) {
-        pr_info("[supercall] caller not trusted, returning");
-        pr_info("[supercall] caller not trusted, returning");
-        pr_info("[supercall] caller not trusted, returning");
-        pr_info("[supercall] caller not trusted, returning");
-        pr_info("[supercall] caller not trusted, returning");
-        pr_info("[supercall] caller not trusted, returning");
-        pr_info("[supercall] caller not trusted, returning");
         return;
     }
 
@@ -573,8 +566,6 @@ static void before(hook_fargs6_t *args, void *udata)
     if (!auth_superkey(key)) {
         is_authed = 1;
         // pr_info("[supercall] superkey auth successful, is_authed=%d", is_authed);
-    } else {
-        pr_info("[supercall] superkey auth failed");
     }
 
     long a1 = (long)syscall_argn(args, 2);
