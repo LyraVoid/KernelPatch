@@ -512,35 +512,86 @@ int is_trusted_manager_uid(uid_t uid)
 
 static void before(hook_fargs6_t *args, void *udata)
 {
-    int uid = current_uid();
+    uid_t uid = current_uid();
 
-    int is_trusted_caller = 0;
-    int is_authed = 0;
-    if (has_preset_superkey()) {
-        const char *__user key_user = (const char *__user)syscall_argn(args, 0);
-        
-        char key[MAX_KEY_LEN];
-        long len = compat_strncpy_from_user(key, key_user, MAX_KEY_LEN);
-        if (len <= 0) return;
-        is_authed = !auth_superkey(key);
-        is_trusted_caller = is_authed;
-    }
-    if (is_trusted_manager_uid(uid)) {
-        is_trusted_caller = 1;
-        is_authed = 1;
-    } else if (is_su_allow_uid(uid)) {
-        is_trusted_caller = 1;
+    /*
+     * side-channel fix:
+     * untrusted app never touches auth path
+     */
+    int is_manager = is_trusted_manager_uid(uid);
+    int is_su_uid = is_su_allow_uid(uid);
+
+    if (!is_manager && !is_su_uid) {
+        return;
     }
 
-    if (!is_trusted_caller) return;
+    long ver_xx_cmd =
+        (long)syscall_argn(args, 1);
 
-    long ver_xx_cmd = (long)syscall_argn(args, 1);
     long cmd = ver_xx_cmd & 0xFFFF;
-    if (cmd < SUPERCALL_HELLO || cmd > SUPERCALL_MAX) return;
 
-    // todo: from 0.10.5
-    // uint32_t ver = (ver_xx_cmd & 0xFFFFFFFF00000000ul) >> 32;
-    // long xx = (ver_xx_cmd & 0xFFFF0000) >> 16;
+    if (cmd < SUPERCALL_HELLO ||
+        cmd > SUPERCALL_MAX) {
+        return;
+    }
+
+    int is_authed = 0;
+
+    /*
+     * manager:
+     * always authenticated
+     */
+    if (is_manager) {
+
+        is_authed = 1;
+
+    } else {
+
+        /*
+         * su compatibility path
+         *
+         * only trusted uid can reach here,
+         * so side-channel already fixed
+         */
+
+        const char __user *ukey =
+            (const char __user *)syscall_argn(args, 0);
+
+        char key[MAX_KEY_LEN];
+
+        long len = compat_strncpy_from_user(
+            key,
+            ukey,
+            MAX_KEY_LEN
+        );
+
+        if (len <= 0)
+            return;
+
+        /*
+         * real superkey
+         */
+        if (has_preset_superkey() &&
+            !auth_superkey(key)) {
+
+            is_authed = 1;
+
+        }
+
+        /*
+         * legacy su
+         */
+        else if (!strcmp(key, "su")) {
+
+            /*
+             * trusted but not authenticated
+             */
+        }
+
+        else {
+            return;
+        }
+    }
 
     long a1 = (long)syscall_argn(args, 2);
     long a2 = (long)syscall_argn(args, 3);
@@ -548,7 +599,15 @@ static void before(hook_fargs6_t *args, void *udata)
     long a4 = (long)syscall_argn(args, 5);
 
     args->skip_origin = 1;
-    args->ret = supercall(is_authed, cmd, a1, a2, a3, a4);
+
+    args->ret = supercall(
+        is_authed,
+        cmd,
+        a1,
+        a2,
+        a3,
+        a4
+    );
 }
 
 int supercall_install()
