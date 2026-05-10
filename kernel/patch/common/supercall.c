@@ -517,33 +517,65 @@ static void before(hook_fargs6_t *args, void *udata)
     int uid = current_uid();
     int is_trusted_caller = 0;
     int is_authed = 0;
-    if(has_preset_superkey()){
-        
+
+    pr_info("[supercall] before_hook: uid=%d, ukey_ptr=%p", uid, ukey);
+
+    if (!has_preset_superkey()) {
+        pr_info("[supercall] has_preset_superkey: yes");
         char key[MAX_KEY_LEN];
         long len = compat_strncpy_from_user(key, ukey, MAX_KEY_LEN);
-        if (len <= 0) return;
+        pr_info("[supercall] copied superkey from user, len=%ld", len);
+        if (len <= 0) {
+            pr_info("[supercall] superkey copy failed or empty");
+            return;
+        }
         is_authed = !auth_superkey(key);
         is_trusted_caller = is_authed;
+        pr_info("[supercall] after superkey auth: is_authed=%d, is_trusted_caller=%d", is_authed, is_trusted_caller);
+    }else{
+        char key[MAX_KEY_LEN];
+        long len = compat_strncpy_from_user(key, ukey, MAX_KEY_LEN);
+        pr_info("[supercall] else %s",key);
+        is_trusted_caller = 0;
     }
-    if(is_trusted_manager_uid(uid)){
+
+    if (is_trusted_manager_uid(uid)) {
+        pr_info("[supercall] uid %d is trusted manager", uid);
         is_trusted_caller = 1;
         is_authed = 1;
-    }else if(is_su_allow_uid(uid)){
+    } else if (is_su_allow_uid(uid)) {
+        pr_info("[supercall] uid %d is allowed SU", uid);
         is_trusted_caller = 1;
     }
-    if(!is_trusted_caller) return;
 
-    
+    pr_info("[supercall] is_trusted_caller=%d", is_trusted_caller);
+    if (!is_trusted_caller) {
+        pr_info("[supercall] caller not trusted, returning");
+        return;
+    }
+
     long ver_xx_cmd = (long)syscall_argn(args, 1);
     long cmd = ver_xx_cmd & 0xFFFF;
-    if (cmd < SUPERCALL_HELLO || cmd > SUPERCALL_MAX) return;
+    pr_info("[supercall] ver_xx_cmd=0x%lx, cmd=0x%lx", ver_xx_cmd, cmd);
+
+    if (cmd < SUPERCALL_HELLO || cmd > SUPERCALL_MAX) {
+        pr_info("[supercall] cmd out of range, returning");
+        return;
+    }
 
     char key[MAX_KEY_LEN];
     long len = compat_strncpy_from_user(key, ukey, MAX_KEY_LEN);
-    if (len <= 0) return;
+    pr_info("[supercall] copied key again from user, len=%ld", len);
+    if (len <= 0) {
+        pr_info("[supercall] key copy failed or empty, returning");
+        return;
+    }
 
     if (!auth_superkey(key)) {
         is_authed = 1;
+        pr_info("[supercall] superkey auth successful, is_authed=%d", is_authed);
+    } else {
+        pr_info("[supercall] superkey auth failed");
     }
 
     long a1 = (long)syscall_argn(args, 2);
@@ -551,8 +583,11 @@ static void before(hook_fargs6_t *args, void *udata)
     long a3 = (long)syscall_argn(args, 4);
     long a4 = (long)syscall_argn(args, 5);
 
+    pr_info("[supercall] supercall args: a1=%lx, a2=%lx, a3=%lx, a4=%lx", a1, a2, a3, a4);
+
     args->skip_origin = 1;
     args->ret = supercall(is_authed, cmd, a1, a2, a3, a4);
+    pr_info("[supercall] supercall executed, ret=%ld", args->ret);
 }
 
 
