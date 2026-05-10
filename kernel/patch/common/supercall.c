@@ -32,6 +32,7 @@
 #include <accctl.h>
 #include <kstorage.h>
 #include <linux/vmalloc.h>
+#include <linux/printk.h>
 #ifdef ANDROID
 #include <userd.h>
 #endif
