@@ -513,7 +513,6 @@ int is_trusted_manager_uid(uid_t uid)
 static void before(hook_fargs6_t *args, void *udata)
 {
     int uid = current_uid();
-    if (get_ap_mod_exclude(uid)) return;
 
     int is_trusted_caller = 0;
     int is_authed = 0;
