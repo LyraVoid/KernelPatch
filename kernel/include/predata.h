@@ -22,6 +22,7 @@ uint64_t rand_next();
 
 int on_each_extra_item(int (*callback)(const patch_extra_item_t *extra, const char *arg, const void *data, void *udata),
                        void *udata);
+void extra_event_init(const char *event);
 
 void predata_init();
 
