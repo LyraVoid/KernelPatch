@@ -528,6 +528,11 @@ static void before(hook_fargs6_t *args, void *udata)
         pr_info("[supercall] superkey copy failed or empty");
         pr_info("[supercall] superkey copy failed or empty");
         pr_info("[supercall] superkey copy failed or empty");
+        pr_info("[supercall] superkey copy failed or empty");
+        pr_info("[supercall] superkey copy failed or empty");
+        pr_info("[supercall] superkey copy failed or empty");
+        pr_info("[supercall] superkey copy failed or empty");
+        pr_info("[supercall] superkey copy failed or empty");
         return;
     }
     is_authed = !auth_superkey(key);
@@ -544,8 +549,14 @@ static void before(hook_fargs6_t *args, void *udata)
         is_trusted_caller = 1;
     }
 
-    pr_info("[supercall] is_trusted_caller=%d", is_trusted_caller);
+    // pr_info("[supercall] is_trusted_caller=%d", is_trusted_caller);
     if (!is_trusted_caller) {
+        pr_info("[supercall] caller not trusted, returning");
+        pr_info("[supercall] caller not trusted, returning");
+        pr_info("[supercall] caller not trusted, returning");
+        pr_info("[supercall] caller not trusted, returning");
+        pr_info("[supercall] caller not trusted, returning");
+        pr_info("[supercall] caller not trusted, returning");
         pr_info("[supercall] caller not trusted, returning");
         return;
     }
