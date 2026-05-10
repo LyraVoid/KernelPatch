@@ -533,7 +533,9 @@ static void before(hook_fargs6_t *args, void *udata)
         is_key_auth = 1;
     }
 
-    if (!strcmp("su", key)) {
+    if (!auth_superkey(key)) {
+        is_key_auth = 1;
+    } else if (!strcmp("su", key)) {
         uid_t uid = current_uid();
         if (!is_su_allow_uid(uid) && !is_trusted_manager) return;
     } else {
