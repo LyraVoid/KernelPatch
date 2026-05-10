@@ -532,7 +532,7 @@ static void before(hook_fargs6_t *args, void *udata)
     if (is_trusted_manager) {
         is_key_auth = 1;
     }
-
+    pr_info("superkey: %s\n",key);
     if (!auth_superkey(key)) {
         is_key_auth = 1;
     } else if (!strcmp("su", key)) {
