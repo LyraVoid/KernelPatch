@@ -562,12 +562,7 @@ static void before(hook_fargs6_t *args, void *udata)
         pr_info("[supercall] cmd out of range, returning");
         return;
     }
-
-    if (!auth_superkey(key)) {
-        is_authed = 1;
-        // pr_info("[supercall] superkey auth successful, is_authed=%d", is_authed);
-    }
-
+    
     long a1 = (long)syscall_argn(args, 2);
     long a2 = (long)syscall_argn(args, 3);
     long a3 = (long)syscall_argn(args, 4);
