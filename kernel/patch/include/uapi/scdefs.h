@@ -126,7 +126,7 @@ struct su_audit_entry
 #define KERNELPATCH_MODULE_DATA_DIR KERNELPATCH_DATA_DIR "/modules"
 #define APD_PATH "/data/adb/apd"
 #define ALL_ALLOW_SCONTEXT "u:r:kp:s0"
-#define ALL_ALLOW_SCONTEXT_MAGISK "u:r:xgisk:s0"
+#define ALL_ALLOW_SCONTEXT_MAGISK "u:r:magisk:s0"
 #define ALL_ALLOW_SCONTEXT_KERNEL "u:r:kernel:s0"
 #else
 #define SH_PATH "/usr/bin/sh"

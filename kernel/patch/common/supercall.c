@@ -33,6 +33,7 @@
 #include <kstorage.h>
 #include <linux/vmalloc.h>
 #include <linux/printk.h>
+#include "selinuxhide.h"
 #ifdef ANDROID
 #include <userd.h>
 #endif

@@ -50,7 +50,7 @@
 #define AP_BIN_DIR AP_DIR "bin/"
 #define AP_LOG_DIR AP_DIR "log/"
 #define AP_MAGISKPOLICY_PATH AP_BIN_DIR "magiskpolicy"
-#define MAGISK_SCTX "u:r:xgisk:s0"
+#define MAGISK_SCTX "u:r:magisk:s0"
 #define APD_PATH "/data/adb/apd"
 #define MAGISK_POLICY_PATH "/data/adb/ap/bin/magiskpolicy"
 #define AP_PACKAGE_CONFIG_PATH "/data/adb/ap/package_config"
