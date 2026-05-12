@@ -32,7 +32,18 @@ ssize_t hk_sel_write_context(struct file *file, char *buf, size_t size){
         pr_info("selinux-hide: found Kernelsu\n");
         return -22;
     }
-
+    if(strstr(buf,"lsposed")){
+        pr_info("selinux-hide: found LSPosed\n");
+        return -22;
+    }
+    if(strstr(buf,"adb_data_file")){
+        pr_info("selinux-hide: found ZygiskNext\n");
+        return -22;
+    }
+    if(strstr(buf,"fsck_untrusted")){
+        pr_info("selinux-hide: neverallow violated;\n");
+        return -22;
+    }
     pr_info("selinux-hide context uid: %d buf: %s\n",uid,buf);
     // 默认允许
     return back_sel_write_context(file,buf,size);
