@@ -64,6 +64,10 @@ ssize_t hk_sel_write_access(struct file *file, char *buf, size_t size){
         pr_info("selinux-hide: found ZygiskNext\n");
         return -22;
     }
+    if(strstr(buf,"fsck_untrusted")){
+        pr_info("selinux-hide: neverallow violated;\n");
+        return -22;
+    }
     pr_info("selinux-hide access uid: %d buf: %s\n",uid,buf);
     // 默认允许
     return back_sel_write_access(file,buf,size);
