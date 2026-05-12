@@ -99,6 +99,9 @@ static void before_rest_init(hook_fargs4_t *args, void *udata)
     rc = netisolate_init();
     log_boot("netisolate_init done: %d\n", rc);
 
+    rc = sehide_init();
+    log_boot("selinuxhide_init done: %d\n", rc);
+
 #ifdef ANDROID
     rc = android_sepolicy_flags_fix();
     log_boot("android_sepolicy_flags_fix done: %d\n", rc);

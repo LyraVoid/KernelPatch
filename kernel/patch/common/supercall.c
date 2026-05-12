@@ -32,6 +32,8 @@
 #include <accctl.h>
 #include <kstorage.h>
 #include <linux/vmalloc.h>
+#include <linux/printk.h>
+#include "selinuxhide.h"
 #ifdef ANDROID
 #include <userd.h>
 #endif
@@ -336,7 +338,7 @@ static long call_kstorage_remove(int gid, long did)
     return remove_kstorage(gid, did);
 }
 
-static long supercall(int is_key_auth, long cmd, long arg1, long arg2, long arg3, long arg4)
+static long supercall(int is_authed, long cmd, long arg1, long arg2, long arg3, long arg4)
 {
     switch (cmd) {
     case SUPERCALL_HELLO:
@@ -415,7 +417,7 @@ static long supercall(int is_key_auth, long cmd, long arg1, long arg2, long arg3
         break;
     }
 
-    if (!is_key_auth) return -EPERM;
+    if (!is_authed) return -EPERM;
 
     switch (cmd) {
     case SUPERCALL_SKEY_GET:
@@ -513,43 +515,68 @@ int is_trusted_manager_uid(uid_t uid)
 static void before(hook_fargs6_t *args, void *udata)
 {
     const char *__user ukey = (const char *__user)syscall_argn(args, 0);
-    long ver_xx_cmd = (long)syscall_argn(args, 1);
+    int uid = current_uid();
+    int is_trusted_caller = 0;
+    int is_authed = 0;
 
-    // todo: from 0.10.5
-    // uint32_t ver = (ver_xx_cmd & 0xFFFFFFFF00000000ul) >> 32;
-    // long xx = (ver_xx_cmd & 0xFFFF0000) >> 16;
+    // pr_info("[supercall] before_hook: uid=%d, ukey_ptr=%p", uid, ukey);
 
-    long cmd = ver_xx_cmd & 0xFFFF;
-    if (cmd < SUPERCALL_HELLO || cmd > SUPERCALL_MAX) return;
-
+    // pr_info("[supercall] has_preset_superkey: yes");
     char key[MAX_KEY_LEN];
     long len = compat_strncpy_from_user(key, ukey, MAX_KEY_LEN);
-    if (len <= 0) return;
+    // pr_info("[supercall] copied superkey from user, len=%ld", len);
+    if (len <= 0) {
+        pr_info("[supercall] superkey copy failed or empty");
+        pr_info("[supercall] superkey copy failed or empty");
+        pr_info("[supercall] superkey copy failed or empty");
+        pr_info("[supercall] superkey copy failed or empty");
+        pr_info("[supercall] superkey copy failed or empty");
+        pr_info("[supercall] superkey copy failed or empty");
+        pr_info("[supercall] superkey copy failed or empty");
+        pr_info("[supercall] superkey copy failed or empty");
+        return;
+    }
+    is_authed = !auth_superkey(key);
+    is_trusted_caller = is_authed;
+    // pr_info("[supercall] after superkey auth: is_authed=%d, is_trusted_caller=%d", is_authed, is_trusted_caller);
+    
 
-    int is_key_auth = 0;
-    int is_trusted_manager = 0;
-    is_trusted_manager = is_trusted_manager_uid(current_uid());
-    if (is_trusted_manager) {
-        is_key_auth = 1;
+    if (is_trusted_manager_uid(uid)) {
+        pr_info("[supercall] uid %d is trusted manager", uid);
+        is_trusted_caller = 1;
+        is_authed = 1;
+    } else if (is_su_allow_uid(uid)) {
+        pr_info("[supercall] uid %d is allowed SU", uid);
+        is_trusted_caller = 1;
     }
 
-    if (!auth_superkey(key)) {
-        is_key_auth = 1;
-    } else if (!strcmp("su", key)) {
-        uid_t uid = current_uid();
-        if (!is_su_allow_uid(uid) && !is_trusted_manager) return;
-    } else {
-        if (!is_trusted_manager) return;
+    // pr_info("[supercall] is_trusted_caller=%d", is_trusted_caller);
+    if (!is_trusted_caller) {
+        return;
     }
 
+    long ver_xx_cmd = (long)syscall_argn(args, 1);
+    long cmd = ver_xx_cmd & 0xFFFF;
+    // pr_info("[supercall] ver_xx_cmd=0x%lx, cmd=0x%lx", ver_xx_cmd, cmd);
+
+    if (cmd < SUPERCALL_HELLO || cmd > SUPERCALL_MAX) {
+        pr_info("[supercall] cmd out of range, returning");
+        return;
+    }
+    
     long a1 = (long)syscall_argn(args, 2);
     long a2 = (long)syscall_argn(args, 3);
     long a3 = (long)syscall_argn(args, 4);
     long a4 = (long)syscall_argn(args, 5);
 
+    // pr_info("[supercall] supercall args: a1=%lx, a2=%lx, a3=%lx, a4=%lx", a1, a2, a3, a4);
+
     args->skip_origin = 1;
-    args->ret = supercall(is_key_auth, cmd, a1, a2, a3, a4);
+    args->ret = supercall(is_authed, cmd, a1, a2, a3, a4);
+    // pr_info("[supercall] supercall executed, ret=%ld", args->ret);
 }
+
+
 
 int supercall_install()
 {
