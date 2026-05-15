@@ -511,25 +511,38 @@ int is_trusted_manager_uid(uid_t uid)
 static void before(hook_fargs6_t *args, void *udata)
 {
     int uid = current_uid();
-    if (get_ap_mod_exclude(uid)) return;
+    if (get_ap_mod_exclude(uid)) {
+        logkfi("[diag:sc] uid=%d excluded\n", uid);
+        return;
+    }
 
     int is_trusted_caller = 0;
     int is_authed = 0;
-    if (has_preset_superkey()) {
+    int has_preset = has_preset_superkey();
+    if (has_preset) {
         const char *__user key_user = (const char *__user)syscall_argn(args, 0);
         
         char key[MAX_KEY_LEN];
         long len = compat_strncpy_from_user(key, key_user, MAX_KEY_LEN);
-        if (len <= 0) return;
+        if (len <= 0) {
+            logkfi("[diag:sc] uid=%d has_preset=%d key_copy_fail len=%ld\n", uid, has_preset, len);
+            return;
+        }
         is_authed = !auth_superkey(key);
         is_trusted_caller = is_authed;
+        logkfi("[diag:sc] uid=%d has_preset=%d key_len=%ld auth=%d\n", uid, has_preset, len, is_authed);
+    } else {
+        logkfi("[diag:sc] uid=%d has_preset=%d skipping_key_auth\n", uid, has_preset);
     }
-    if (is_trusted_manager_uid(uid)) {
+    int is_tm = is_trusted_manager_uid(uid);
+    int is_su = is_su_allow_uid(uid);
+    if (is_tm) {
         is_trusted_caller = 1;
         is_authed = 1;
-    } else if (is_su_allow_uid(uid)) {
+    } else if (is_su) {
         is_trusted_caller = 1;
     }
+    logkfi("[diag:sc] uid=%d is_tm=%d is_su=%d is_authed=%d is_trusted=%d\n", uid, is_tm, is_su, is_authed, is_trusted_caller);
 
     if (!is_trusted_caller) return;
 
@@ -548,6 +561,10 @@ static void before(hook_fargs6_t *args, void *udata)
 
     args->skip_origin = 1;
     args->ret = supercall(is_authed, cmd, a1, a2, a3, a4);
+
+    if (cmd != SUPERCALL_HELLO && cmd != SUPERCALL_KLOG) {
+        logkfi("[diag:sc] uid=%d cmd=0x%lx is_authed=%d ret=%ld\n", uid, cmd, is_authed, (long)args->ret);
+    }
 }
 
 int supercall_install()
