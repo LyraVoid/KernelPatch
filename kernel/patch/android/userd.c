@@ -122,14 +122,14 @@ static const char user_rc_data[] = { //
     "on late-init\n"
     "    exec -- " SUPERCMD " %s event late-init before\n"
     "on post-fs-data\n"
-    "    exec -- " SUPERCMD " su -Z " MAGISK_SCTX " exec " MAGISK_POLICY_PATH " --magisk --live\n"
-    "    exec -- " SUPERCMD " su -Z " MAGISK_SCTX " exec " APD_PATH " -s %s post-fs-data\n"
+    "    exec -- " SUPERCMD " %s -Z " MAGISK_SCTX " exec " MAGISK_POLICY_PATH " --magisk --live\n"
+    "    exec -- " SUPERCMD " %s -Z " MAGISK_SCTX " exec " APD_PATH " -s %s post-fs-data\n"
     "on nonencrypted\n"
-    "    exec -- " SUPERCMD " su -Z " MAGISK_SCTX " exec " APD_PATH " -s %s services\n"
+    "    exec -- " SUPERCMD " %s -Z " MAGISK_SCTX " exec " APD_PATH " -s %s services\n"
     "on property:vold.decrypt=trigger_restart_framework\n"
-    "    exec -- " SUPERCMD " su -Z " MAGISK_SCTX " exec " APD_PATH " -s %s services\n"
+    "    exec -- " SUPERCMD " %s -Z " MAGISK_SCTX " exec " APD_PATH " -s %s services\n"
     "on property:sys.boot_completed=1\n"
-    "    exec -- " SUPERCMD " su -Z " MAGISK_SCTX " exec " APD_PATH " -s %s boot-completed\n"
+    "    exec -- " SUPERCMD " %s -Z " MAGISK_SCTX " exec " APD_PATH " -s %s boot-completed\n"
     "    exec -- " SUPERCMD " su event boot-completed\n"
     "    exec -- " SUPERCMD " su -Z " MAGISK_SCTX " exec " APD_PATH " uid-listener &\n"
     "    rm " REPLACE_RC_FILE "\n"
@@ -1565,7 +1565,7 @@ static void before_openat(hook_fargs4_t *args, void *udata)
 
     char added_rc_data[4096];
     const char *sk = get_superkey();
-    sprintf(added_rc_data, user_rc_data, sk, sk, sk, sk, sk, sk, sk);
+    sprintf(added_rc_data, user_rc_data, sk, sk, sk, sk, sk, sk, sk, sk, sk, sk, sk, sk);
 
     kernel_write(newfp, added_rc_data, strlen(added_rc_data), &off);
     if (off != strlen(added_rc_data) + ori_len) {
