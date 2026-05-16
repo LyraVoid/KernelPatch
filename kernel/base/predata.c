@@ -36,6 +36,8 @@ static const char bstr[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
 
 static uint64_t _rand_next = 1000000007;
 static bool enable_root_key = false;
+static bool superkey_is_user_set = false;
+static bool root_superkey_is_set = false;
 
 int auth_superkey(const char *key)
 {
@@ -324,13 +326,15 @@ int on_each_extra_item(int (*callback)(const patch_extra_item_t *extra, const ch
 
 int has_preset_superkey()
 {
-    return start_preset.superkey[0] != '\0';
+    return superkey_is_user_set || root_superkey_is_set;
 }
 
 void predata_init()
 {
     superkey = (char *)start_preset.superkey;
     root_superkey = (char *)start_preset.root_superkey;
+    superkey_is_user_set = lib_strnlen(superkey, SUPER_KEY_LEN) > 0;
+    root_superkey_is_set = *(uint64_t *)root_superkey;
     char *compile_time = start_preset.header.compile_time;
 
     // RNG
@@ -346,7 +350,7 @@ void predata_init()
     enable_root_key = false;
 
     // random key
-    if (lib_strnlen(superkey, SUPER_KEY_LEN) <= 0) {
+    if (!superkey_is_user_set) {
         enable_root_key = true;
         int len = SUPER_KEY_LEN > 16 ? 16 : SUPER_KEY_LEN;
         len--;
@@ -355,7 +359,6 @@ void predata_init()
             superkey[i] = bstr[rand];
         }
     }
-    log_boot("gen rand key: %s\n", superkey);
 
     patch_config = &start_preset.patch_config;
 
