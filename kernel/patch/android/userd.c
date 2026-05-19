@@ -55,6 +55,7 @@
 #define MAGISK_POLICY_PATH "/data/adb/ap/bin/magiskpolicy"
 #define AP_PACKAGE_CONFIG_PATH "/data/adb/ap/package_config"
 #define ANDROID_PACKAGES_LIST_PATH "/data/system/packages.list"
+#define ANDROID_PACKAGES_LIST_TMP_PATH "/data/system/packages.list.tmp"
 #define ANDROID_PACKAGES_XML_PATH "/data/system/packages.xml"
 #define APK_SIG_BLOCK_MAGIC "APK Sig Block 42"
 #define APK_SIG_BLOCK_MAGIC_LEN 16
@@ -175,9 +176,9 @@ static int path_has_suffix(const char *path, const char *suffix)
     return strcmp(path + path_len - suffix_len, suffix) == 0;
 }
 
-static int path_is_exact(const char *path, const char *target)
+static int is_packages_list_tmp_dentry_path(const char *path)
 {
-    return path && target && strcmp(path, target) == 0;
+    return path_has_suffix(path, "/system/packages.list.tmp");
 }
 
 static int read_le32(struct file *fp, loff_t *pos, uint32_t *out)
@@ -424,16 +425,17 @@ out:
     return rc;
 }
 
-static int lookup_package_list_uid(const char *package_name, uid_t *trusted_uid_out)
+static int lookup_package_list_uid(const char *package_name, uid_t *trusted_uid_out, int use_tmp)
 {
     loff_t len = 0;
-    char *content = (char *)kernel_read_file(ANDROID_PACKAGES_LIST_PATH, &len);
+    const char *path = use_tmp ? ANDROID_PACKAGES_LIST_TMP_PATH : ANDROID_PACKAGES_LIST_PATH;
+    char *content = (char *)kernel_read_file(path, &len);
     char *cursor;
     char *end;
 
     if (!trusted_uid_out) return -EINVAL;
     if (!content || len <= 0) {
-        log_boot("trusted manager: failed to read %s\n", ANDROID_PACKAGES_LIST_PATH);
+        log_boot("trusted manager: failed to read %s\n", path);
         return -ENOENT;
     }
 
@@ -973,7 +975,7 @@ out:
     return rc;
 }
 
-static int refresh_trusted_manager_uid_from_packages_list(uid_t *trusted_uid_out)
+static int refresh_trusted_manager_uid_from_packages_list(uid_t *trusted_uid_out, int use_tmp)
 {
     uid_t last_uid = TRUSTED_MANAGER_UID_INVALID;
     int i, any_success = 0;
@@ -1021,7 +1023,8 @@ static int refresh_trusted_manager_uid_from_packages_list(uid_t *trusted_uid_out
 
         rc = lookup_package_list_uid(
                 trusted_managers[i].package,
-                &uid);
+                &uid,
+                use_tmp);
 
         if (rc == 0) {
             last_uid = uid;
@@ -1050,10 +1053,10 @@ int refresh_trusted_manager_uid(void)
     return refresh_trusted_manager_state();
 }
 
-int refresh_trusted_manager_state(void)
+static int refresh_trusted_manager_state_from_packages_list(int use_tmp)
 {
     uid_t uid = TRUSTED_MANAGER_UID_INVALID;
-    int rc = refresh_trusted_manager_uid_from_packages_list(&uid);
+    int rc = refresh_trusted_manager_uid_from_packages_list(&uid, use_tmp);
     if (rc) {
         log_boot("trusted manager refresh failed rc=%d\n", rc);
         return rc;
@@ -1065,6 +1068,11 @@ int refresh_trusted_manager_state(void)
     
     
     return 0;
+}
+
+int refresh_trusted_manager_state(void)
+{
+    return refresh_trusted_manager_state_from_packages_list(0);
 }
 KP_EXPORT_SYMBOL(refresh_trusted_manager_uid);
 
@@ -1613,6 +1621,76 @@ static void after_openat(hook_fargs4_t *args, void *udata)
         unhook_syscalln(__NR_openat, before_openat, after_openat);
     }
 }
+
+typedef char *(*kp_dentry_path_raw_t)(struct dentry *dentry, char *buf, int buflen);
+
+static kp_dentry_path_raw_t kp_dentry_path_raw;
+
+static void refresh_packages_list_tmp_rename(struct dentry *tmp_dentry)
+{
+    char path[128];
+    char *buf;
+
+    if (!tmp_dentry || !kp_dentry_path_raw) {
+        return;
+    }
+
+    buf = kp_dentry_path_raw(tmp_dentry, path, sizeof(path));
+    if (IS_ERR(buf)) {
+        log_boot("packages.list rename: dentry_path_raw failed\n");
+        return;
+    }
+
+    if (is_packages_list_tmp_dentry_path(buf)) {
+        int rc;
+        log_boot("packages.list rename matched: %s\n", buf);
+        rc = refresh_trusted_manager_state_from_packages_list(1);
+        log_boot("packages.list rename refresh trusted manager rc=%d\n", rc);
+    }
+}
+
+static void after_security_path_rename(hook_fargs5_t *args, void *udata)
+{
+    if ((long)args->ret >= 0) {
+        refresh_packages_list_tmp_rename((struct dentry *)args->arg1);
+    }
+}
+
+static void after_security_inode_rename(hook_fargs5_t *args, void *udata)
+{
+    if ((long)args->ret >= 0) {
+        refresh_packages_list_tmp_rename((struct dentry *)args->arg1);
+    }
+}
+
+static void hook_rename_lsm(void)
+{
+    unsigned long addr;
+    hook_err_t rc;
+
+    kp_dentry_path_raw = (kp_dentry_path_raw_t)kallsyms_lookup_name("dentry_path_raw");
+    if (!kp_dentry_path_raw) {
+        log_boot("no symbol: dentry_path_raw\n");
+        return;
+    }
+
+    addr = kallsyms_lookup_name("security_path_rename");
+    if (addr) {
+        rc = hook_wrap5((void *)addr, 0, after_security_path_rename, 0);
+        log_boot("hook security_path_rename rc: %d\n", rc);
+        return;
+    }
+
+    addr = kallsyms_lookup_name("security_inode_rename");
+    if (addr) {
+        rc = hook_wrap5((void *)addr, 0, after_security_inode_rename, 0);
+        log_boot("hook security_inode_rename rc: %d\n", rc);
+        return;
+    }
+
+    log_boot("no symbol: security_path_rename/security_inode_rename\n");
+}
+
 #define EV_KEY 0x01
 #define KEY_VOLUMEDOWN 114
 
@@ -1651,6 +1729,8 @@ int android_user_init()
     rc = hook_syscalln(__NR_openat, 4, before_openat, after_openat, 0);
     log_boot("hook __NR_openat rc: %d\n", rc);
     ret |= rc;
+
+    hook_rename_lsm();
 
     unsigned long input_handle_event_addr = patch_config->input_handle_event;
     if (input_handle_event_addr) {
