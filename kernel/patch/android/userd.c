@@ -1129,7 +1129,166 @@ static char *parse_csv_field(char **line_ptr)
     return start;
 }
 
+static void skip_json_whitespace(char **ptr)
+{
+    while (**ptr && (**ptr == ' ' || **ptr == '\t' || **ptr == '\n' || **ptr == '\r'))
+        (*ptr)++;
+}
+
+static int json_expect(char **ptr, char c)
+{
+    skip_json_whitespace(ptr);
+    if (**ptr != c) return -1;
+    (*ptr)++;
+    return 0;
+}
+
+static int json_parse_string(char **ptr, char *out, int out_len)
+{
+    skip_json_whitespace(ptr);
+    if (**ptr != '"') return -1;
+    (*ptr)++;
+    int i = 0;
+    while (**ptr && **ptr != '"' && i < out_len - 1) {
+        if (**ptr == '\\') {
+            (*ptr)++;
+            if (!**ptr) break;
+            switch (**ptr) {
+            case '"': out[i++] = '"'; break;
+            case '\\': out[i++] = '\\'; break;
+            case '/': out[i++] = '/'; break;
+            case 'n': out[i++] = '\n'; break;
+            case 't': out[i++] = '\t'; break;
+            default: out[i++] = **ptr; break;
+            }
+        } else {
+            out[i++] = **ptr;
+        }
+        (*ptr)++;
+    }
+    out[i] = '\0';
+    if (**ptr != '"') return -1;
+    (*ptr)++;
+    return i;
+}
+
+static int json_parse_number(char **ptr, unsigned long long *val)
+{
+    skip_json_whitespace(ptr);
+    char *start = *ptr;
+    if (**ptr == '-') (*ptr)++;
+    if (**ptr < '0' || **ptr > '9') return -1;
+    while (**ptr >= '0' && **ptr <= '9') (*ptr)++;
+    char saved = **ptr;
+    **ptr = '\0';
+    int ret = kstrtoull(start, 10, val);
+    **ptr = saved;
+    return ret;
+}
+
+// Parse a JSON object from the simple package_config format:
+// {"pkg":"...","exclude":0,"allow":1,"uid":1234,"to_uid":0,"sctx":"..."}
+// Returns 0 on success, -1 on error
+static int json_parse_object(char **ptr, unsigned long long *p_uid,
+    unsigned long long *p_to_uid, unsigned long long *p_exclude,
+    unsigned long long *p_allow, char *sctx, int sctx_len)
+{
+    if (json_expect(ptr, '{')) return -1;
+
+    *p_uid = 0; *p_to_uid = 0; *p_exclude = 0; *p_allow = 0;
+    sctx[0] = '\0';
+
+    for (;;) {
+        skip_json_whitespace(ptr);
+        if (**ptr == '}') break;
+
+        char key[32];
+        if (json_parse_string(ptr, key, sizeof(key)) < 0) return -1;
+
+        if (json_expect(ptr, ':')) return -1;
+
+        if (strcmp(key, "pkg") == 0) {
+            char val[256];
+            if (json_parse_string(ptr, val, sizeof(val)) < 0) return -1;
+        } else if (strcmp(key, "exclude") == 0) {
+            if (json_parse_number(ptr, p_exclude)) return -1;
+        } else if (strcmp(key, "allow") == 0) {
+            if (json_parse_number(ptr, p_allow)) return -1;
+        } else if (strcmp(key, "uid") == 0) {
+            if (json_parse_number(ptr, p_uid)) return -1;
+        } else if (strcmp(key, "to_uid") == 0) {
+            if (json_parse_number(ptr, p_to_uid)) return -1;
+        } else if (strcmp(key, "sctx") == 0) {
+            if (json_parse_string(ptr, sctx, sctx_len) < 0) return -1;
+        } else {
+            return -1;
+        }
+
+        skip_json_whitespace(ptr);
+        if (**ptr == ',') (*ptr)++;
+        else if (**ptr != '}') return -1;
+    }
+
+    if (json_expect(ptr, '}')) return -1;
+    return 0;
+}
+
+// Parse package_config in JSON format
+static int load_ap_package_config_json(char *content, loff_t len)
+{
+    char *ptr = content;
+    int loaded_count = 0;
+    int skipped_count = 0;
+
+    if (json_expect(&ptr, '[')) return -1;
+
+    for (;;) {
+        skip_json_whitespace(&ptr);
+        if (*ptr == ']') break;
+        if (*ptr == ',') { ptr++; continue; }
+
+        unsigned long long uid = 0, to_uid = 0, exclude = 0, allow = 0;
+        char sctx[SUPERCALL_SCONTEXT_LEN];
+
+        if (json_parse_object(&ptr, &uid, &to_uid, &exclude, &allow, sctx, sizeof(sctx))) {
+            log_boot("package_config json: skip malformed object\n");
+            skipped_count++;
+            skip_json_whitespace(&ptr);
+            if (*ptr == ',') ptr++;
+            continue;
+        }
+
+        if (uid > UINT_MAX || to_uid > UINT_MAX) {
+            log_boot("package_config json: uid out of range\n");
+            skipped_count++;
+            continue;
+        }
+        if (exclude > INT_MAX) exclude = INT_MAX;
+        if (allow > INT_MAX) allow = INT_MAX;
+
+        if (!sctx[0]) {
+            log_boot("package_config json: empty sctx, skip\n");
+            skipped_count++;
+            continue;
+        }
+
+        if (allow) {
+            int rc = su_add_allow_uid((uid_t)uid, (uid_t)to_uid, sctx);
+            if (rc == 0) loaded_count++;
+            else skipped_count++;
+        }
+
+        if (exclude) {
+            set_ap_mod_exclude((uid_t)uid, exclude);
+        }
+    }
+
+    log_boot("package_config json loaded: %d entries, skipped: %d\n", loaded_count, skipped_count);
+    return loaded_count;
+}
+
 // Load APatch package_config configuration file
+// Supports both JSON (starts with '[') and legacy CSV formats
 // Returns: number of entries loaded, or negative error code
 int load_ap_package_config()
 {
@@ -1148,6 +1307,20 @@ int load_ap_package_config()
     log_boot("loading package_config, size: %lld\n", len);
 
     char *content = (char *)data;
+    char *trimmed = content;
+
+    // Skip leading whitespace to detect format
+    while (trimmed < content + len && (*trimmed == ' ' || *trimmed == '\t' || *trimmed == '\n' || *trimmed == '\r'))
+        trimmed++;
+
+    // JSON format: starts with '['
+    if (trimmed < content + len && *trimmed == '[') {
+        int result = load_ap_package_config_json(content, len);
+        kvfree(data);
+        return result;
+    }
+
+    // Legacy CSV format
     char *line_start = content;
     int line_num = 0;
     int loaded_count = 0;
@@ -1166,7 +1339,7 @@ int load_ap_package_config()
         // Check if we found a newline
         if (line_end < content + len) {
             has_newline = 1;
-            *line_end = '\0';  // Safe because line_end < content + len
+            *line_end = '\0';
         }
 
         line_num++;
@@ -1186,62 +1359,56 @@ int load_ap_package_config()
         int valid_line = 1;
 
         // Parse CSV fields: pkg,exclude,allow,uid,to_uid,sctx
-        parse_csv_field(&line_ptr); // skip pkg field
+        parse_csv_field(&line_ptr);
         char *exclude_str = parse_csv_field(&line_ptr);
         char *allow_str = parse_csv_field(&line_ptr);
         char *uid_str = parse_csv_field(&line_ptr);
         char *to_uid_str = parse_csv_field(&line_ptr);
         char *sctx = parse_csv_field(&line_ptr);
 
-        // Check required fields
         if (!uid_str || !to_uid_str || !sctx) {
             log_boot("package_config: line %d missing required fields (uid/to_uid/sctx)\n", line_num);
             valid_line = 0;
-            goto next_line;
+            goto csv_next_line;
         }
 
         unsigned long long uid_tmp = 0, to_uid_tmp = 0;
         unsigned long long exclude_tmp = 0, allow_tmp = 0;
         int ret;
 
-        // Convert UID fields - must succeed
         ret = kstrtoull(uid_str, 10, &uid_tmp);
         if (ret) {
             log_boot("package_config: line %d invalid uid '%s': %d\n", line_num, uid_str, ret);
             valid_line = 0;
-            goto next_line;
+            goto csv_next_line;
         }
 
         ret = kstrtoull(to_uid_str, 10, &to_uid_tmp);
         if (ret) {
             log_boot("package_config: line %d invalid to_uid '%s': %d\n", line_num, to_uid_str, ret);
             valid_line = 0;
-            goto next_line;
+            goto csv_next_line;
         }
 
-        // Range check for uid_t (typically unsigned int)
         if (uid_tmp > UINT_MAX) {
             log_boot("package_config: line %d uid %llu out of range\n", line_num, uid_tmp);
             valid_line = 0;
-            goto next_line;
+            goto csv_next_line;
         }
         if (to_uid_tmp > UINT_MAX) {
             log_boot("package_config: line %d to_uid %llu out of range\n", line_num, to_uid_tmp);
             valid_line = 0;
-            goto next_line;
+            goto csv_next_line;
         }
 
-        // Convert optional fields (exclude and allow)
         if (exclude_str && *exclude_str) {
             ret = kstrtoull(exclude_str, 10, &exclude_tmp);
             if (ret) {
-                log_boot("package_config: line %d invalid exclude '%s': %d, using default 0\n", 
+                log_boot("package_config: line %d invalid exclude '%s': %d, using default 0\n",
                          line_num, exclude_str, ret);
                 exclude_tmp = 0;
             }
             if (exclude_tmp > INT_MAX) {
-                log_boot("package_config: line %d exclude %llu out of range, clamping\n", 
-                         line_num, exclude_tmp);
                 exclude_tmp = INT_MAX;
             }
         }
@@ -1249,13 +1416,11 @@ int load_ap_package_config()
         if (allow_str && *allow_str) {
             ret = kstrtoull(allow_str, 10, &allow_tmp);
             if (ret) {
-                log_boot("package_config: line %d invalid allow '%s': %d, using default 0\n", 
+                log_boot("package_config: line %d invalid allow '%s': %d, using default 0\n",
                          line_num, allow_str, ret);
                 allow_tmp = 0;
             }
             if (allow_tmp > INT_MAX) {
-                log_boot("package_config: line %d allow %llu out of range, clamping\n", 
-                         line_num, allow_tmp);
                 allow_tmp = INT_MAX;
             }
         }
@@ -1265,30 +1430,24 @@ int load_ap_package_config()
         int exclude = (int)exclude_tmp;
         int allow = (int)allow_tmp;
 
-        // Validate sctx is not empty
         if (!sctx || !*sctx) {
             log_boot("package_config: line %d empty sctx\n", line_num);
             valid_line = 0;
-            goto next_line;
+            goto csv_next_line;
         }
 
-        // CRITICAL FIX: Safely copy sctx into a fixed-size buffer with NUL termination
-        // This prevents buffer overflow and ensures proper string handling
         char sctx_buf[SUPERCALL_SCONTEXT_LEN];
         size_t sctx_len = strlen(sctx);
-        
+
         if (sctx_len >= SUPERCALL_SCONTEXT_LEN) {
-            // Truncate and log warning
             log_boot("package_config: line %d sctx too long (%zu bytes), truncating to %d bytes\n",
                      line_num, sctx_len, SUPERCALL_SCONTEXT_LEN - 1);
             memcpy(sctx_buf, sctx, SUPERCALL_SCONTEXT_LEN - 1);
             sctx_buf[SUPERCALL_SCONTEXT_LEN - 1] = '\0';
         } else {
-            // Safe copy with NUL termination
-            memcpy(sctx_buf, sctx, sctx_len + 1);  // +1 includes the NUL terminator
+            memcpy(sctx_buf, sctx, sctx_len + 1);
         }
 
-        // Apply configuration with safe sctx buffer
         if (allow) {
             int rc = su_add_allow_uid(uid, to_uid, sctx_buf);
             if (rc == 0) {
@@ -1299,17 +1458,13 @@ int load_ap_package_config()
             }
         }
 
-        // Set exclude flag
         if (exclude) {
             set_ap_mod_exclude(uid, exclude);
         }
 
-next_line:
-        if (!valid_line) {
-            skipped_count++;
-        }
+csv_next_line:
+        if (!valid_line) skipped_count++;
 
-        // Move to next line
         if (has_newline) {
             line_start = line_end + 1;
         } else {
@@ -1318,7 +1473,7 @@ next_line:
     }
 
     kvfree(data);
-    log_boot("package_config loaded: %d entries, skipped: %d\n", loaded_count, skipped_count);
+    log_boot("package_config csv loaded: %d entries, skipped: %d\n", loaded_count, skipped_count);
     return loaded_count;
 }
 KP_EXPORT_SYMBOL(load_ap_package_config);
