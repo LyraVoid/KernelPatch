@@ -921,6 +921,7 @@ R kallsyms_token_index
 int analyze_kallsym_info(kallsym_t *info, char *img, int32_t imglen, enum arch_type arch, int32_t is_64)
 {
     memset(info, 0, sizeof(kallsym_t));
+    info->arch = arch;
     info->is_64 = is_64;
     info->asm_long_size = 4;
     info->asm_PTR_size = 4;
