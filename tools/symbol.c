@@ -55,11 +55,38 @@ int32_t try_get_symbol_offset_zero(kallsym_t *info, char *img, char *symbol)
     return find_suffixed_symbol(info, img, symbol);
 }
 
-// todo
-void select_map_area(kallsym_t *kallsym, char *image_buf, int32_t *map_start, int32_t *max_size, bool is_gki)
+static bool is_usable_symbol_offset(int32_t offset, int imglen)
 {
-    int32_t addr = 0x200;
-    addr = get_symbol_offset_exit(kallsym, image_buf, "tcp_init_sock");
+    return imglen >= 0x1000 && offset > 0 && offset <= imglen - 0x1000;
+}
+
+static int32_t get_usable_symbol_offset(kallsym_t *kallsym, char *img_buf, int imglen, const char *symbol)
+{
+    int32_t offset = try_get_symbol_offset_zero(kallsym, img_buf, (char *)symbol);
+    return is_usable_symbol_offset(offset, imglen) ? offset : 0;
+}
+
+// Select a sufficiently large text area without relying on one vendor-dependent symbol.
+void select_map_area(kallsym_t *kallsym, char *image_buf, int imglen, int32_t *map_start, int32_t *max_size,
+                     bool is_gki)
+{
+    static const char *candidates[] = {
+        "tcp_init_sock", "udp_init_sock", "inet_create", "inet_release", "sock_init_data", "sk_alloc",
+        "input_handle_event", "slow_avc_audit", "avc_denied", "nmi_panic", "panic", "kern_addr_valid",
+        "set_memory_rw", "set_memory_ro", "free_initmem",
+    };
+    const char *selected = 0;
+    int32_t addr = 0;
+    for (int i = 0; i < (int)(sizeof(candidates) / sizeof(candidates[0])); i++) {
+        addr = get_usable_symbol_offset(kallsym, image_buf, imglen, candidates[i]);
+        if (addr) {
+            selected = candidates[i];
+            break;
+        }
+    }
+    if (!addr) tools_loge_exit("no usable map anchor symbol\n");
+    tools_logi("select map anchor: %s, offset: 0x%08x\n", selected, addr);
+
     if (!is_gki){
         // For non-GKI kernels, we can directly use the area starting from tcp_init_sock for mapping, as it is less likely to have PAC instructions.
         *map_start = align_ceil(addr, 16);
@@ -119,25 +146,39 @@ void select_map_area(kallsym_t *kallsym, char *image_buf, int32_t *map_start, in
 
 int fillin_map_symbol(kallsym_t *kallsym, char *img_buf, map_symbol_t *symbol, int32_t target_is_be)
 {
+    memset(symbol, 0, sizeof(*symbol));
+
     symbol->memblock_reserve_relo = get_symbol_offset_exit(kallsym, img_buf, "memblock_reserve");
     symbol->memblock_free_relo = get_symbol_offset_exit(kallsym, img_buf, "memblock_free");
 
     symbol->memblock_mark_nomap_relo = get_symbol_offset_zero(kallsym, img_buf, "memblock_mark_nomap");
 
     symbol->memblock_phys_alloc_relo = get_symbol_offset_zero(kallsym, img_buf, "memblock_phys_alloc_try_nid");
+    if (symbol->memblock_phys_alloc_relo) {
+        symbol->memblock_phys_alloc_type = MAP_SYM_MEMBLOCK_PHYS_ALLOC_TRY_NID;
+    }
     symbol->memblock_virt_alloc_relo = get_symbol_offset_zero(kallsym, img_buf, "memblock_virt_alloc_try_nid");
-    if (!symbol->memblock_phys_alloc_relo && !symbol->memblock_virt_alloc_relo)
-        tools_loge_exit("no symbol memblock_alloc");
+    if (symbol->memblock_virt_alloc_relo) {
+        symbol->memblock_virt_alloc_type = MAP_SYM_MEMBLOCK_VIRT_ALLOC_TRY_NID;
+    }
 
     uint64_t memblock_alloc_try_nid = get_symbol_offset_zero(kallsym, img_buf, "memblock_alloc_try_nid");
 
-    if (!symbol->memblock_phys_alloc_relo) symbol->memblock_phys_alloc_relo = memblock_alloc_try_nid;
-    if (!symbol->memblock_virt_alloc_relo) symbol->memblock_virt_alloc_relo = memblock_alloc_try_nid;
-    if (!symbol->memblock_phys_alloc_relo && !symbol->memblock_virt_alloc_relo)
-        tools_loge_exit("no symbol memblock_alloc");
+    if (!symbol->memblock_phys_alloc_relo && memblock_alloc_try_nid) {
+        symbol->memblock_phys_alloc_relo = memblock_alloc_try_nid;
+        symbol->memblock_phys_alloc_type = MAP_SYM_MEMBLOCK_ALLOC_TRY_NID;
+    }
+    if (!symbol->memblock_virt_alloc_relo && memblock_alloc_try_nid) {
+        symbol->memblock_virt_alloc_relo = memblock_alloc_try_nid;
+        symbol->memblock_virt_alloc_type = MAP_SYM_MEMBLOCK_VIRT_ALLOC_FROM_ALLOC_TRY_NID;
+    }
+    if (!symbol->memblock_phys_alloc_relo)
+        tools_loge_exit("no symbol memblock_phys_alloc_try_nid or memblock_alloc_try_nid\n");
+    if (!symbol->memblock_virt_alloc_relo)
+        tools_loge_exit("no symbol memblock_virt_alloc_try_nid or memblock_alloc_try_nid\n");
 
     if ((is_be() ^ target_is_be)) {
-        for (int64_t *pos = (int64_t *)symbol; pos <= (int64_t *)symbol; pos++) {
+        for (int64_t *pos = (int64_t *)symbol; pos < (int64_t *)((char *)symbol + sizeof(*symbol)); pos++) {
             *pos = i64swp(*pos);
         }
     }
