@@ -34,4 +34,11 @@ long folkpatch_pathhide_uid_clear(void);
 long folkpatch_pathhide_uid_mode(int enable);
 long folkpatch_pathhide_filter_system(int enable);
 
+long folkpatch_netisolate_enable(int enable);
+long folkpatch_netisolate_status(void);
+long folkpatch_netisolate_uid_add(uid_t uid);
+long folkpatch_netisolate_uid_remove(uid_t uid);
+long folkpatch_netisolate_uid_list(char __user *out, int out_len);
+long folkpatch_netisolate_uid_clear(void);
+
 #endif
