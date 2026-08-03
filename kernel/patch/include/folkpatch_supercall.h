@@ -6,6 +6,7 @@
 #include <ktypes.h>
 #include <linux/uaccess.h>
 #include <uapi/scdefs.h>
+#include <folkpatch_suaudit.h>
 
 /* FolkPatch owns this range; upstream commands must remain unchanged. */
 static inline bool folkpatch_supercall_cmd(long cmd)

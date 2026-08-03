@@ -111,8 +111,7 @@ static __noinline void mem_proc(map_data_t *data)
 
     // linear
     if (data->map_symbol.memblock_virt_alloc_relo) {
-        uint64_t detect_phys =
-            ((memblock_phys_alloc_try_nid_f)data->map_symbol.memblock_phys_alloc_relo)(0, 0x10, NUMA_NO_NODE);
+        uint64_t detect_phys = map_phys_alloc(data, 0, 0x10);
         uint64_t detect_virt = (uint64_t)((memblock_virt_alloc_try_nid_f)data->map_symbol.memblock_virt_alloc_relo)(
             0, 0x10, detect_phys, detect_phys, NUMA_NO_NODE);
         data->linear_voffset = detect_virt - detect_phys;

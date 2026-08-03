@@ -7,6 +7,7 @@
 #include <linux/vmalloc.h>
 #include <uapi/asm-generic/errno.h>
 #include <kstorage.h>
+#include <kputils.h>
 #include <folkpatch_suaudit.h>
 
 #define FOLKPATCH_SUAUDIT_MAX_ENTRIES 256

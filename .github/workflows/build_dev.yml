@@ -2,7 +2,7 @@ name: Build DEV CI
 
 on:
   push:
-    branches: ["dev"]
+    branches: ["dev", "feature/p8-compat-fixes"]
     paths:
       - ".github/workflows/build_dev.yml"
       - "kernel/**"
@@ -27,7 +27,7 @@ jobs:
       contents: write
     steps:
       - name: Check out
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
           submodules: "recursive"
           fetch-depth: 0
@@ -46,17 +46,18 @@ jobs:
           tar -Jxf arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf.tar.xz
       - name: Build kpimg
         run: |
+          set -o pipefail
           export TARGET_COMPILE=`pwd`/arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf/bin/aarch64-none-elf-
           cd kernel
 
           export ANDROID=1
-          make hdr kpimg
+          make hdr kpimg 2>&1 | tee ../kpimg-build.log
           mv kpimg kpimg-android
           mv kpimg.elf kpimg.elf-android
           make clean
 
           unset ANDROID
-          make
+          make 2>&1 | tee -a ../kpimg-build.log
           mv kpimg kpimg-linux
           mv kpimg.elf kpimg.elf-linux
 
@@ -75,31 +76,24 @@ jobs:
           make
           mv syscallhook.kpm demo-syscallhook.kpm
 
-      - name: Upload elf
-        uses: actions/upload-artifact@v3
+      - name: Upload kpimg artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
+          if-no-files-found: warn
           path: |
-            kernel/kpimg.elf-linux
-            kernel/kpimg.elf-android
-            kernel/kpimg-x86.elf
-          name: kpimg.elf
-
-      - name: Release
-        uses: ncipollo/release-action@v1.12.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ steps.parse_version.outputs.VERSION }}-dev
-          artifacts: |
+            kpimg-build.log
             kernel/kpimg-linux
             kernel/kpimg-android
             kernel/kpimg-x86
+            kernel/kpimg.elf-linux
+            kernel/kpimg.elf-android
+            kernel/kpimg-x86.elf
             kpms/demo-hello/demo-hello.kpm
             kpms/demo-inlinehook/demo-inlinehook.kpm
             kpms/demo-syscallhook/demo-syscallhook.kpm
-          generateReleaseNotes: true
-          allowUpdates: true
-          replacesArtifacts: true
-          prerelease: true
+          name: kernelpatch-${{ github.sha }}
+          retention-days: 14
 
   Release-user-lib:
     runs-on: ubuntu-latest
@@ -107,7 +101,7 @@ jobs:
       contents: write
     steps:
       - name: Check out
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
       - name: Generate version
         id: parse_version
         run: |
@@ -126,16 +120,12 @@ jobs:
           cd ..
           zip -r kpuser.zip user
 
-      - name: Release
-        uses: ncipollo/release-action@v1.12.0
+      - name: Upload user library
+        uses: actions/upload-artifact@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ steps.parse_version.outputs.VERSION }}-dev
-          artifacts: |
-            kpuser.zip
-          allowUpdates: true
-          replacesArtifacts: true
-          prerelease: true
+          name: kpuser-${{ github.sha }}
+          path: kpuser.zip
+          retention-days: 14
 
   Build-android-kptools:
     runs-on: ubuntu-latest
@@ -143,7 +133,7 @@ jobs:
       contents: write
     steps:
       - name: Check out
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
           submodules: "recursive"
           fetch-depth: 0
@@ -183,16 +173,12 @@ jobs:
           cmake --build .
           mv kptools kptools-android
 
-      - name: Release
-        uses: ncipollo/release-action@v1.12.0
+      - name: Upload Android kptools
+        uses: actions/upload-artifact@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ steps.parse_version.outputs.VERSION }}-dev
-          artifacts: |
-            tools/build/android/kptools-android
-          allowUpdates: true
-          replacesArtifacts: true
-          prerelease: true
+          name: kptools-android-${{ github.sha }}
+          path: tools/build/android/kptools-android
+          retention-days: 14
 
   Build-kptools-linux:
     runs-on: ubuntu-latest
@@ -200,7 +186,7 @@ jobs:
       contents: write
     steps:
       - name: Check out
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
       - name: Generate version
         id: parse_version
         run: |
@@ -226,16 +212,12 @@ jobs:
           make
           mv kptools kptools-linux
 
-      - name: Release
-        uses: ncipollo/release-action@v1.12.0
+      - name: Upload Linux kptools
+        uses: actions/upload-artifact@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ steps.parse_version.outputs.VERSION }}-dev
-          artifacts: |
-            tools/build/kptools-linux
-          allowUpdates: true
-          replacesArtifacts: true
-          prerelease: true
+          name: kptools-linux-${{ github.sha }}
+          path: tools/build/kptools-linux
+          retention-days: 14
 
   Build-kptools-mac:
     runs-on: macos-latest
@@ -243,7 +225,7 @@ jobs:
       contents: write
     steps:
       - name: Check out
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
       - name: Generate version
         id: parse_version
         run: |
@@ -268,13 +250,9 @@ jobs:
           cmake ..
           make
           mv kptools kptools-mac
-      - name: Release
-        uses: ncipollo/release-action@v1.12.0
+      - name: Upload macOS kptools
+        uses: actions/upload-artifact@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ steps.parse_version.outputs.VERSION }}-dev
-          artifacts: |
-            tools/build/kptools-mac
-          allowUpdates: true
-          replacesArtifacts: true
-          prerelease: true
+          name: kptools-macos-${{ github.sha }}
+          path: tools/build/kptools-mac
+          retention-days: 14

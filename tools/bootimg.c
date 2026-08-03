@@ -849,7 +849,7 @@ int repack_bootimg(const char *orig_boot_path,
         tools_logi(" Compressing new kernel with BZIP2 (Level 9)...\n");
 
         unsigned int max_out_size = (unsigned int)(raw_k_size * 1.01) + 600;
-        uint8_t *compressed_buf = (uint8_t *)malloc(max_out_size);
+        compressed_buf = (uint8_t *)malloc(max_out_size);
         if (!compressed_buf) return -1;
 
         unsigned int final_size = max_out_size;
@@ -869,8 +869,6 @@ int repack_bootimg(const char *orig_boot_path,
     }
     if (method == 6 || method == 7) { 
         tools_logi(" Original was XZ/LZMA. Repacking as GZIP for compatibility...\n");
-        uint8_t *compressed_buf = NULL;
-        uint32_t final_k_size = 0;
         if (compress_gzip(raw_k_buf, raw_k_size, &compressed_buf, &final_k_size) == 0) {
             final_k_buf = compressed_buf;
             method = 1; 
@@ -890,9 +888,11 @@ int repack_bootimg(const char *orig_boot_path,
     uint8_t *rest_buf = NULL;
     uint32_t rest_buf_offset  = 0;
     if (rest_data_size > 0) {
-        rest_buf_tmp = malloc(rest_data_size);
+        rest_buf_tmp = calloc(1, rest_data_size);
+        if (!rest_buf_tmp) return -1;
         fseek(f_orig, rest_data_offset, SEEK_SET);
-        fread(rest_buf_tmp, 1, rest_data_size-sizeof(avb), f_orig);
+        uint32_t rest_payload_size = rest_data_size >= sizeof(avb) ? rest_data_size - sizeof(avb) : rest_data_size;
+        fread(rest_buf_tmp, 1, rest_payload_size, f_orig);
         for (int32_t i = (int32_t)rest_data_size - 1; i >= 0; i--) {
             if (rest_buf_tmp[i] != 0) {
                 rest_buf_offset = (uint32_t)(i + 1);
@@ -924,7 +924,8 @@ int repack_bootimg(const char *orig_boot_path,
         if (use_sha256){
             SHA256_CTX ctx;
             sha256_init(&ctx);
-            sha256_update(&ctx, (const BYTE *)final_k_buf, hdr.kernel_size);
+            sha256_update(&ctx, (const BYTE *)final_k_buf, final_k_size);
+            if (extracted_dtb) sha256_update(&ctx, (const BYTE *)extracted_dtb, dtb_size);
             sha256_update(&ctx, (const BYTE *)&hdr.kernel_size, 4);
             sha256_update(&ctx, (const BYTE *)rest_buf, fmt_size);
             sha256_update(&ctx, (const BYTE *)&fmt_size, sizeof(fmt_size));
@@ -959,7 +960,8 @@ int repack_bootimg(const char *orig_boot_path,
         }else{
             SHA1_CTX ctx;
             sha1_init(&ctx);
-            sha1_update(&ctx, (const BYTE *)final_k_buf, hdr.kernel_size);
+            sha1_update(&ctx, (const BYTE *)final_k_buf, final_k_size);
+            if (extracted_dtb) sha1_update(&ctx, (const BYTE *)extracted_dtb, dtb_size);
             sha1_update(&ctx, (const BYTE *)&hdr.kernel_size, 4);
             sha1_update(&ctx, (const BYTE *)rest_buf, fmt_size);
             sha1_update(&ctx, (const BYTE *)&fmt_size, sizeof(fmt_size));

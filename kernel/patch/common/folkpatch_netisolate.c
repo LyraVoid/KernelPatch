@@ -8,6 +8,8 @@
 #include <linux/kernel.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
+#include <linux/vmalloc.h>
+#include <kputils.h>
 #include <syscall.h>
 #include <uapi/asm-generic/errno.h>
 #include <uapi/asm-generic/unistd.h>

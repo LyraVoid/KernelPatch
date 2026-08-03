@@ -10,6 +10,7 @@
 #include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/vmalloc.h>
+#include <kputils.h>
 #include <uapi/asm-generic/errno.h>
 #include <uapi/asm-generic/unistd.h>
 #include <syscall.h>
@@ -220,7 +221,7 @@ int folkpatch_pathhide_init(void)
         pathhide_copy_from_user = (void *)kallsyms_lookup_name("_copy_from_user");
     openat = fp_hook_syscalln(__NR_openat, 4, folkpatch_pathhide_before_path, 0, 0);
     faccessat = fp_hook_syscalln(__NR_faccessat, 3, folkpatch_pathhide_before_path, 0, 0);
-    newfstatat = fp_hook_syscalln(__NR_newfstatat, 4, folkpatch_pathhide_before_path, 0, 0);
+    newfstatat = fp_hook_syscalln(__NR3264_fstatat, 4, folkpatch_pathhide_before_path, 0, 0);
     getdents64 = fp_hook_syscalln(__NR_getdents64, 3, 0,
                                   folkpatch_pathhide_after_getdents64, 0);
     pathhide.hooks_ready = !openat && !faccessat && !newfstatat && !getdents64 &&
