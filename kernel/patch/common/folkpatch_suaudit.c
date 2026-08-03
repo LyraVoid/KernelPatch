@@ -152,7 +152,9 @@ long folkpatch_suaudit_list(struct su_audit_entry __user *entries, int num)
     copied = compat_copy_to_user(entries, snapshot,
                                  (size_t)count * sizeof(*snapshot));
     vfree(snapshot);
-    return copied == 0 ? count : -EFAULT;
+    /* compat_copy_to_user returns the number of bytes copied (== len on
+     * success), not the kernel's 0-on-success convention. */
+    return copied == (size_t)count * sizeof(*snapshot) ? count : -EFAULT;
 }
 
 long folkpatch_suaudit_clear(void)
