@@ -441,7 +441,6 @@ static void before(hook_fargs6_t *args, void *udata)
         }
         is_authed = !auth_superkey(key);
         is_trusted_caller = is_authed;
-        logkfi("[diag:sc] uid=%d has_preset=%d key_len=%ld auth=%d\n", uid, has_preset, len, is_authed);
     }
     int is_tm = is_trusted_manager_uid(uid);
     int is_su = is_su_allow_uid(uid);
@@ -456,10 +455,11 @@ static void before(hook_fargs6_t *args, void *udata)
          * the APD (uid 0) cannot load KPMs at boot. */
         if (!has_preset) is_authed = 1;
     }
-    logkfi("[diag:sc] uid=%d is_tm=%d is_su=%d is_authed=%d is_trusted=%d\n",
-           uid, is_tm, is_su, is_authed, is_trusted_caller);
-
-    if (!is_trusted_caller) return;
+    if (!is_trusted_caller) {
+        logkfi("[diag:sc] uid=%d has_preset=%d is_tm=%d is_su=%d denied\n",
+               uid, has_preset, is_tm, is_su);
+        return;
+    }
 
     long ver_xx_cmd = (long)syscall_argn(args, 1);
     long cmd = ver_xx_cmd & 0xFFFF;
