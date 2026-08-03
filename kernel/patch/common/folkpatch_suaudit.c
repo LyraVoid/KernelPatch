@@ -8,6 +8,7 @@
 #include <uapi/asm-generic/errno.h>
 #include <kstorage.h>
 #include <kputils.h>
+#include <log.h>
 #include <folkpatch_suaudit.h>
 
 #define FOLKPATCH_SUAUDIT_MAX_ENTRIES 256
@@ -58,10 +59,13 @@ int folkpatch_suaudit_init(void)
     atomic64_set(&audit_sequence, 0);
     audit_gid = try_alloc_kstroage_group();
     if (audit_gid != KSTORAGE_SU_AUDIT_GROUP) {
+        logkfe("group alloc mismatch: got %d want %d\n",
+               audit_gid, KSTORAGE_SU_AUDIT_GROUP);
         audit_gid = -1;
         return -ENOMEM;
     }
     rc = folkpatch_suaudit_trim();
+    logkfi("audit_gid=%d trim=%d\n", audit_gid, rc);
     return rc < 0 ? rc : 0;
 }
 
@@ -83,8 +87,13 @@ void folkpatch_suaudit_record(uid_t uid, pid_t pid, pid_t tgid,
     if (scontext) strncpy(entry.scontext, scontext, sizeof(entry.scontext) - 1);
     if (comm) strncpy(entry.comm, comm, sizeof(entry.comm) - 1);
 
-    if (!write_kstorage(audit_gid, sequence, &entry, 0, sizeof(entry), false))
+    if (write_kstorage(audit_gid, sequence, &entry, 0, sizeof(entry), false)) {
+        logkfe("write failed gid=%d seq=%ld uid=%d\n", audit_gid, sequence, uid);
+    } else {
+        logkfi("recorded seq=%ld uid=%d to_uid=%d comm='%s'\n",
+               sequence, uid, to_uid, entry.comm);
         folkpatch_suaudit_trim();
+    }
 }
 
 long folkpatch_suaudit_list(struct su_audit_entry __user *entries, int num)
@@ -98,7 +107,10 @@ long folkpatch_suaudit_list(struct su_audit_entry __user *entries, int num)
     if (num < 0 || num > FOLKPATCH_SUAUDIT_MAX_ENTRIES) return -EINVAL;
     count = kstorage_group_size(audit_gid);
     if (count < 0) return count;
-    if (num == 0) return count;
+    if (num == 0) {
+        logkfi("count=%d gid=%d\n", count, audit_gid);
+        return count;
+    }
     if (!entries) return -EFAULT;
     if (count > num) count = num;
     if (!count) return 0;
