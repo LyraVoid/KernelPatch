@@ -15,6 +15,35 @@ long folkpatch_supercall(int is_authed, long cmd, long arg1, long arg2,
                                  (const char __user *)arg2);
     case SUPERCALL_UTS_RESET:
         return folkpatch_uts_reset();
+    case SUPERCALL_SU_AUDIT_LIST:
+        return folkpatch_suaudit_list((struct su_audit_entry __user *)arg1,
+                                      (int)arg2);
+    case SUPERCALL_SU_AUDIT_CLEAR:
+        return folkpatch_suaudit_clear();
+    case SUPERCALL_PATHHIDE_ADD:
+        return folkpatch_pathhide_add((const char __user *)arg1);
+    case SUPERCALL_PATHHIDE_REMOVE:
+        return folkpatch_pathhide_remove((const char __user *)arg1);
+    case SUPERCALL_PATHHIDE_LIST:
+        return folkpatch_pathhide_list((char __user *)arg1, (int)arg2);
+    case SUPERCALL_PATHHIDE_CLEAR:
+        return folkpatch_pathhide_clear();
+    case SUPERCALL_PATHHIDE_ENABLE:
+        return folkpatch_pathhide_enable((int)arg1);
+    case SUPERCALL_PATHHIDE_STATUS:
+        return folkpatch_pathhide_status();
+    case SUPERCALL_PATHHIDE_UID_ADD:
+        return folkpatch_pathhide_uid_add((uid_t)arg1);
+    case SUPERCALL_PATHHIDE_UID_REMOVE:
+        return folkpatch_pathhide_uid_remove((uid_t)arg1);
+    case SUPERCALL_PATHHIDE_UID_LIST:
+        return folkpatch_pathhide_uid_list((char __user *)arg1, (int)arg2);
+    case SUPERCALL_PATHHIDE_UID_CLEAR:
+        return folkpatch_pathhide_uid_clear();
+    case SUPERCALL_PATHHIDE_UID_MODE:
+        return folkpatch_pathhide_uid_mode((int)arg1);
+    case SUPERCALL_PATHHIDE_FILTER_SYSTEM:
+        return folkpatch_pathhide_filter_system((int)arg1);
     default:
         break;
     }
