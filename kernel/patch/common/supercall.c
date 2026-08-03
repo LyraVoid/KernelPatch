@@ -429,21 +429,35 @@ static void before(hook_fargs6_t *args, void *udata)
 
     int is_trusted_caller = 0;
     int is_authed = 0;
-    if (has_preset_superkey()) {
+    int has_preset = has_preset_superkey();
+    if (has_preset) {
         const char *__user key_user = (const char *__user)syscall_argn(args, 0);
         
         char key[MAX_KEY_LEN];
         long len = compat_strncpy_from_user(key, key_user, MAX_KEY_LEN);
-        if (len <= 0) return;
+        if (len <= 0) {
+            logkfi("[diag:sc] uid=%d has_preset=%d key_copy_fail len=%ld\n", uid, has_preset, len);
+            return;
+        }
         is_authed = !auth_superkey(key);
         is_trusted_caller = is_authed;
+        logkfi("[diag:sc] uid=%d has_preset=%d key_len=%ld auth=%d\n", uid, has_preset, len, is_authed);
     }
-    if (is_trusted_manager_uid(uid)) {
+    int is_tm = is_trusted_manager_uid(uid);
+    int is_su = is_su_allow_uid(uid);
+    if (is_tm) {
         is_trusted_caller = 1;
         is_authed = 1;
-    } else if (is_su_allow_uid(uid)) {
+    } else if (is_su) {
         is_trusted_caller = 1;
+        /* When no superkey is configured at build time the runtime key is
+         * randomly generated and never usable for authentication; in that mode
+         * an already-trusted su caller must count as fully authenticated, or
+         * the APD (uid 0) cannot load KPMs at boot. */
+        if (!has_preset) is_authed = 1;
     }
+    logkfi("[diag:sc] uid=%d is_tm=%d is_su=%d is_authed=%d is_trusted=%d\n",
+           uid, is_tm, is_su, is_authed, is_trusted_caller);
 
     if (!is_trusted_caller) return;
 

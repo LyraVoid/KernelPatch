@@ -30,10 +30,12 @@ static int folkpatch_uts_value_len(const char *value, int limit)
 
 static int folkpatch_uts_write(char *dst, const char *src, int len)
 {
+    uintptr_t pa_mask;
     uintptr_t start;
     uintptr_t end;
 
     if (!dst || !src || len <= 0) return -EINVAL;
+    pa_mask = (((uintptr_t)1 << (48 - page_shift)) - 1) << page_shift;
     start = (uintptr_t)dst;
     end = start + (uintptr_t)len;
     if (end < start) return -EFAULT;
@@ -44,7 +46,10 @@ static int folkpatch_uts_write(char *dst, const char *src, int len)
         uintptr_t *entry = pgtable_entry_kernel(start);
         uintptr_t original_pte;
         uintptr_t writable_pte;
+        uintptr_t *group;
         int chunk_len;
+        int is_cont;
+        int i;
 
         if (!entry || chunk_end <= start) {
             logkfe("pgtable entry missing for %lx\n", start);
@@ -52,18 +57,37 @@ static int folkpatch_uts_write(char *dst, const char *src, int len)
         }
         chunk_len = (int)(chunk_end - start);
         original_pte = *entry;
-        if (pte_valid_cont(original_pte)) {
-            logkfe("contiguous pte for %lx: %llx\n", start, original_pte);
-            return -EOPNOTSUPP;
+        is_cont = pte_valid_cont(original_pte);
+
+        if (is_cont) {
+            /* Contiguous block: every entry in the group must carry the same
+             * permission bits. Update the whole CONT_PTES group at once, then
+             * restore it the same way after the write. */
+            group = (uintptr_t *)((uintptr_t)entry & ~(sizeof(uintptr_t) * CONT_PTES - 1));
+            writable_pte = (original_pte | PTE_DBM) & ~((uintptr_t)PTE_RDONLY);
+            for (i = 0; i < CONT_PTES; ++i)
+                group[i] = (group[i] & pa_mask) | (writable_pte & ~pa_mask);
+            flush_tlb_kernel_range(start & CONT_PTE_MASK,
+                                   (start & CONT_PTE_MASK) + CONT_PTES * page_size);
+        } else {
+            writable_pte = original_pte | PTE_DBM;
+            writable_pte &= ~((uintptr_t)PTE_RDONLY);
+            *entry = writable_pte;
+            flush_tlb_kernel_page(start);
         }
-        writable_pte = original_pte | PTE_DBM;
-        writable_pte &= ~((uintptr_t)PTE_RDONLY);
-        *entry = writable_pte;
-        flush_tlb_kernel_page(start);
+
         memcpy((void *)start, src + (start - (uintptr_t)dst), chunk_len);
         dsb(ish);
-        *entry = original_pte;
-        flush_tlb_kernel_page(start);
+
+        if (is_cont) {
+            for (i = 0; i < CONT_PTES; ++i)
+                group[i] = (group[i] & pa_mask) | (original_pte & ~pa_mask);
+            flush_tlb_kernel_range(start & CONT_PTE_MASK,
+                                   (start & CONT_PTE_MASK) + CONT_PTES * page_size);
+        } else {
+            *entry = original_pte;
+            flush_tlb_kernel_page(start);
+        }
         start = chunk_end;
     }
 
