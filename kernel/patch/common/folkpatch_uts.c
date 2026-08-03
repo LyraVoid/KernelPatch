@@ -46,10 +46,16 @@ static int folkpatch_uts_write(char *dst, const char *src, int len)
         uintptr_t writable_pte;
         int chunk_len;
 
-        if (!entry || chunk_end <= start) return -EFAULT;
+        if (!entry || chunk_end <= start) {
+            logkfe("pgtable entry missing for %lx\n", start);
+            return -EFAULT;
+        }
         chunk_len = (int)(chunk_end - start);
         original_pte = *entry;
-        if (pte_valid_cont(original_pte)) return -EOPNOTSUPP;
+        if (pte_valid_cont(original_pte)) {
+            logkfe("contiguous pte for %lx: %llx\n", start, original_pte);
+            return -EOPNOTSUPP;
+        }
         writable_pte = original_pte | PTE_DBM;
         writable_pte &= ~((uintptr_t)PTE_RDONLY);
         *entry = writable_pte;
@@ -105,17 +111,26 @@ static int folkpatch_uts_resolve(void)
         if (release && version && version_end) break;
     }
 
-    if (!release || !version || !version_end || version <= release || version_end <= version)
+    if (!release || !version || !version_end || version <= release || version_end <= version) {
+        logkfe("resolve failed: release=%p version=%p version_end=%p\n",
+               release, version, version_end);
         return -ENOENT;
+    }
     uts_release_limit = (int)(version - release) - 1;
-    if (uts_release_limit <= 0 || uts_release_limit >= FOLKPATCH_UTS_VALUE_LEN)
+    if (uts_release_limit <= 0 || uts_release_limit >= FOLKPATCH_UTS_VALUE_LEN) {
+        logkfe("release limit out of range: %d\n", uts_release_limit);
         return -E2BIG;
+    }
 
     uts_version_limit = (int)(version_end - version) - 1;
-    if (uts_version_limit <= 0 || uts_version_limit >= FOLKPATCH_UTS_VALUE_LEN)
+    if (uts_version_limit <= 0 || uts_version_limit >= FOLKPATCH_UTS_VALUE_LEN) {
+        logkfe("version limit out of range: %d\n", uts_version_limit);
         return -E2BIG;
+    }
     uts_release = (char *)release;
     uts_version = (char *)version;
+    logkfi("resolved release='%s' version='%s' limit=%d/%d\n",
+           uts_release, uts_version, uts_release_limit, uts_version_limit);
     return 0;
 }
 
@@ -157,28 +172,53 @@ long folkpatch_uts_set(const char __user *u_release,
     int version_len;
     int rc;
 
+    if (!u_release && !u_version) {
+        logkfe("nothing to spoof (both args null)\n");
+        return -EINVAL;
+    }
+
     if (!uts_release) {
         rc = folkpatch_uts_resolve();
-        if (rc) return rc;
+        if (rc) {
+            logkfe("resolve failed: %d\n", rc);
+            return rc;
+        }
     }
     rc = folkpatch_uts_save_originals();
-    if (rc) return rc;
+    if (rc) {
+        logkfe("save originals failed: %d\n", rc);
+        return rc;
+    }
 
     release_len = folkpatch_uts_copy(u_release, release, uts_release_limit);
-    if (release_len < 0) return release_len;
+    if (release_len < 0) {
+        logkfe("invalid release: %d\n", release_len);
+        return release_len;
+    }
     version_len = folkpatch_uts_copy(u_version, version, uts_version_limit);
-    if (version_len < 0) return version_len;
+    if (version_len < 0) {
+        logkfe("invalid version: %d\n", version_len);
+        return version_len;
+    }
 
     if (u_release) {
         rc = folkpatch_uts_write(uts_release, release, release_len + 1);
-        if (rc) return rc;
+        if (rc) {
+            logkfe("write release failed: %d\n", rc);
+            return rc;
+        }
+        logkfi("release set to '%s'\n", release);
     }
     if (u_version) {
         rc = folkpatch_uts_write(uts_version, version, version_len + 1);
-        if (rc && u_release)
-            folkpatch_uts_write(uts_release, original_release,
-                                strnlen(original_release, sizeof(original_release) - 1) + 1);
-        return rc;
+        if (rc) {
+            logkfe("write version failed: %d\n", rc);
+            if (u_release)
+                folkpatch_uts_write(uts_release, original_release,
+                                    strnlen(original_release, sizeof(original_release) - 1) + 1);
+            return rc;
+        }
+        logkfi("version set to '%s'\n", version);
     }
     return 0;
 }
@@ -187,10 +227,21 @@ long folkpatch_uts_reset(void)
 {
     int rc;
 
-    if (!originals_saved) return 0;
+    if (!originals_saved) {
+        logkfi("no originals saved, nothing to restore\n");
+        return 0;
+    }
     rc = folkpatch_uts_write(uts_release, original_release,
                              strnlen(original_release, sizeof(original_release) - 1) + 1);
-    if (rc) return rc;
-    return folkpatch_uts_write(uts_version, original_version,
-                               strnlen(original_version, sizeof(original_version) - 1) + 1);
+    if (rc) {
+        logkfe("restore release failed: %d\n", rc);
+        return rc;
+    }
+    rc = folkpatch_uts_write(uts_version, original_version,
+                             strnlen(original_version, sizeof(original_version) - 1) + 1);
+    if (rc)
+        logkfe("restore version failed: %d\n", rc);
+    else
+        logkfi("restored original uts\n");
+    return rc;
 }
