@@ -8,10 +8,16 @@
 long folkpatch_supercall(int is_authed, long cmd, long arg1, long arg2,
                          long arg3, long arg4)
 {
-    (void)is_authed;
-    (void)cmd;
-    (void)arg1;
-    (void)arg2;
+    if (!is_authed) return -EPERM;
+    switch (cmd) {
+    case SUPERCALL_UTS_SET:
+        return folkpatch_uts_set((const char __user *)arg1,
+                                 (const char __user *)arg2);
+    case SUPERCALL_UTS_RESET:
+        return folkpatch_uts_reset();
+    default:
+        break;
+    }
     (void)arg3;
     (void)arg4;
     return -ENOSYS;

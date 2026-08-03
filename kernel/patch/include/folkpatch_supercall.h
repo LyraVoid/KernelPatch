@@ -15,4 +15,8 @@ static inline bool folkpatch_supercall_cmd(long cmd)
 long folkpatch_supercall(int is_authed, long cmd, long arg1, long arg2,
                          long arg3, long arg4);
 
+long folkpatch_uts_set(const char __user *u_release,
+                       const char __user *u_version);
+long folkpatch_uts_reset(void);
+
 #endif
