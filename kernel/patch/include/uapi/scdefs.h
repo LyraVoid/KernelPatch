@@ -29,6 +29,12 @@ static inline long hash_key(const char *key)
 #define SUPERCALL_KERNELPATCH_VER 0x1008
 #define SUPERCALL_KERNEL_VER 0x1009
 
+/* Reserved for the isolated FolkPatch extension dispatcher. */
+#define SUPERCALL_FOLKPATCH_MIN 0x1050
+#define SUPERCALL_FOLKPATCH_MAX 0x10fc
+#define SUPERCALL_FOLKPATCH_AUDIT_MIN 0x1120
+#define SUPERCALL_FOLKPATCH_AUDIT_MAX 0x1121
+
 
 #define SUPERCALL_SKEY_GET 0x100a
 #define SUPERCALL_SKEY_SET 0x100b

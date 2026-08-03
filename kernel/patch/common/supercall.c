@@ -31,6 +31,7 @@
 #include <sucompat.h>
 #include <accctl.h>
 #include <kstorage.h>
+#include <folkpatch_supercall.h>
 #ifdef ANDROID
 #include <userd.h>
 #endif
@@ -356,6 +357,10 @@ static long supercall(int is_authed, long cmd, long arg1, long arg2, long arg3, 
     case SUPERCALL_SKEY_ROOT_ENABLE:
         return call_skey_root_enable((int)arg1);
         break;
+    }
+
+    if (folkpatch_supercall_cmd(cmd)) {
+        return folkpatch_supercall(is_authed, cmd, arg1, arg2, arg3, arg4);
     }
 
     switch (cmd) {
