@@ -15,6 +15,11 @@ long folkpatch_supercall(int is_authed, long cmd, long arg1, long arg2,
                                  (const char __user *)arg2);
     case SUPERCALL_UTS_RESET:
         return folkpatch_uts_reset();
+    case SUPERCALL_SU_AUDIT_LIST:
+        return folkpatch_suaudit_list((struct su_audit_entry __user *)arg1,
+                                      (int)arg2);
+    case SUPERCALL_SU_AUDIT_CLEAR:
+        return folkpatch_suaudit_clear();
     default:
         break;
     }

@@ -32,6 +32,9 @@
 #include <accctl.h>
 #include <kstorage.h>
 #include <folkpatch_supercall.h>
+#include <folkpatch_suaudit.h>
+#include <linux/pid.h>
+#include <linux/sched/task.h>
 #ifdef ANDROID
 #include <userd.h>
 #endif
@@ -139,16 +142,41 @@ static long call_su(struct su_profile *__user uprofile)
     if (!profile || IS_ERR(profile)) return PTR_ERR(profile);
     profile->scontext[sizeof(profile->scontext) - 1] = '\0';
     int rc = commit_su(profile->to_uid, profile->scontext);
+    if (!rc) {
+        folkpatch_suaudit_record(current_uid(),
+                                 __task_pid_nr_ns(current, PIDTYPE_PID, 0),
+                                 __task_pid_nr_ns(current, PIDTYPE_TGID, 0),
+                                 profile->to_uid, profile->scontext,
+                                 get_task_comm(current));
+    }
     kvfree(profile);
     return rc;
 }
 
 static long call_su_task(pid_t pid, struct su_profile *__user uprofile)
 {
+    uid_t source_uid = current_uid();
+    pid_t source_pid = pid;
+    pid_t source_tgid = pid;
+    char source_comm[TASK_COMM_LEN] = { 0 };
     struct su_profile *profile = memdup_user(uprofile, sizeof(struct su_profile));
     if (!profile || IS_ERR(profile)) return PTR_ERR(profile);
     profile->scontext[sizeof(profile->scontext) - 1] = '\0';
+    struct task_struct *task = find_get_task_by_vpid(pid);
+    if (task) {
+        struct cred *cred = *(struct cred **)((uintptr_t)task + task_struct_offset.cred_offset);
+        source_uid = *(uid_t *)((uintptr_t)cred + cred_offset.uid_offset);
+        source_pid = __task_pid_nr_ns(task, PIDTYPE_PID, 0);
+        source_tgid = __task_pid_nr_ns(task, PIDTYPE_TGID, 0);
+        strncpy(source_comm, get_task_comm(task), sizeof(source_comm) - 1);
+        __put_task_struct(task);
+    }
     int rc = task_su(pid, profile->to_uid, profile->scontext);
+    if (!rc) {
+        folkpatch_suaudit_record(source_uid, source_pid, source_tgid,
+                                 profile->to_uid, profile->scontext,
+                                 source_comm);
+    }
     kvfree(profile);
     return rc;
 }

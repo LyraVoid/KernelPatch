@@ -4,6 +4,8 @@
 #define _KP_FOLKPATCH_SUPERCALL_H_
 
 #include <ktypes.h>
+#include <linux/uaccess.h>
+#include <uapi/scdefs.h>
 
 /* FolkPatch owns this range; upstream commands must remain unchanged. */
 static inline bool folkpatch_supercall_cmd(long cmd)

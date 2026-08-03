@@ -39,6 +39,8 @@
 #include <uapi/linux/limits.h>
 #include <predata.h>
 #include <kstorage.h>
+#include <linux/pid.h>
+#include <folkpatch_suaudit.h>
 
 const char sh_path[] = SH_PATH;
 const char default_su_path[] = SU_PATH;
@@ -211,7 +213,12 @@ static void handle_before_execve(char **__user u_filename_p, char **__user uargv
 
         uid_t to_uid = profile.to_uid;
         const char *sctx = profile.scontext;
-        commit_su(to_uid, sctx);
+        if (!commit_su(to_uid, sctx)) {
+            folkpatch_suaudit_record(uid,
+                                     __task_pid_nr_ns(current, PIDTYPE_PID, 0),
+                                     __task_pid_nr_ns(current, PIDTYPE_TGID, 0),
+                                     to_uid, sctx, get_task_comm(current));
+        }
 
 #ifdef ANDROID
         struct file *filp = filp_open(apd_path, O_RDONLY, 0);
@@ -401,6 +408,9 @@ int su_compat_init()
 
     exclude_kstorage_gid = try_alloc_kstroage_group();
     if (exclude_kstorage_gid != KSTORAGE_EXCLUDE_LIST_GROUP) return -ENOMEM;
+
+    /* SU remains available if the optional audit storage cannot initialize. */
+    folkpatch_suaudit_init();
 
 #ifdef ANDROID
     // default shell
