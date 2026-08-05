@@ -120,9 +120,7 @@ struct su_profile
     char scontext[SUPERCALL_SCONTEXT_LEN];
 };
 
-#ifndef TASK_COMM_LEN
-#define TASK_COMM_LEN 16
-#endif
+#define SU_AUDIT_COMM_LEN 16
 
 struct su_audit_entry
 {
@@ -132,7 +130,7 @@ struct su_audit_entry
     pid_t tgid;
     uid_t to_uid;
     char scontext[SUPERCALL_SCONTEXT_LEN];
-    char comm[TASK_COMM_LEN];
+    char comm[SU_AUDIT_COMM_LEN];
 };
 
 #ifdef ANDROID
