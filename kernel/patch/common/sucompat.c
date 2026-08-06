@@ -54,6 +54,7 @@ static const char *current_su_path = 0;
 
 static int su_kstorage_gid = -1;
 static int exclude_kstorage_gid = -1;
+static bool su_path_probe_hooks_registered;
 static void su_register_path_probe_hooks(void);
 static void su_unregister_path_probe_hooks(void);
 long kp_control_feature_sc(const char __user *uname, int state)
@@ -555,6 +556,9 @@ static void su_register_path_probe_hooks(void)
 {
     hook_err_t rc;
 
+    if (su_path_probe_hooks_registered)
+        return;
+
     rc = hook_syscalln(__NR3264_fstatat, 4, su_handler_arg1_ufilename_before, 0, (void *)0);
     log_boot("hook __NR3264_fstatat rc: %d\n", rc);
 
@@ -567,14 +571,20 @@ static void su_register_path_probe_hooks(void)
 
     rc = hook_compat_syscalln(334, 3, su_handler_arg1_ufilename_before, 0, (void *)0);
     log_boot("hook 32 __NR_faccessat rc: %d\n", rc);
+
+    su_path_probe_hooks_registered = true;
 }
 
 static void su_unregister_path_probe_hooks(void)
 {
+    if (!su_path_probe_hooks_registered)
+        return;
+
     unhook_syscalln(__NR3264_fstatat, su_handler_arg1_ufilename_before, 0);
     unhook_syscalln(__NR_faccessat, su_handler_arg1_ufilename_before, 0);
     unhook_compat_syscalln(327, su_handler_arg1_ufilename_before, 0);
     unhook_compat_syscalln(334, su_handler_arg1_ufilename_before, 0);
+    su_path_probe_hooks_registered = false;
 }
 
 void sucompat_init()
