@@ -30,17 +30,11 @@ static DEFINE_MUTEX(kp_hook_lock);
 static void *(*kp_hook_module_alloc)(unsigned long size);
 static void (*kp_hook_module_memfree)(void *region);
 static void (*kp_hook_flush_icache_all)(void);
-static int (*kp_hook_set_memory_x)(unsigned long addr, int numpages);
 
 __attribute__((no_sanitize("cfi")))
 static void *kp_hook_exec_alloc(unsigned long size)
 {
-	void *p = kp_hook_module_alloc(size);
-	/* GKI module_alloc returns PAGE_KERNEL (PXN set, NX). Hook trampolines
-	 * live here and must be executable. */
-	if (p && kp_hook_set_memory_x)
-		kp_hook_set_memory_x((unsigned long)p, (size + PAGE_SIZE - 1) >> PAGE_SHIFT);
-	return p;
+	return kp_hook_module_alloc(size);
 }
 
 __attribute__((no_sanitize("cfi")))
@@ -61,10 +55,9 @@ int kp_hook_runtime_init(void)
 	kp_hook_module_alloc = (void *)kp_resolve_symbol("module_alloc");
 	kp_hook_module_memfree = (void *)kp_resolve_symbol("module_memfree");
 	kp_hook_flush_icache_all = (void *)kp_resolve_symbol("flush_icache_all");
-	kp_hook_set_memory_x = (int (*)(unsigned long, int))kp_resolve_symbol("set_memory_x");
 	if (!kp_hook_module_alloc || !kp_hook_module_memfree)
 		return -ENOSYS;
-	logki("KPM hook runtime ready (set_memory_x=%px)\n", kp_hook_set_memory_x);
+	logki("KPM hook runtime ready\n");
 	return 0;
 }
 
