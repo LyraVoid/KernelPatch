@@ -23,6 +23,13 @@
 
 long kp_kpm_load_sc(const char __user *upath, const char __user *uargs, void __user *reserved)
 {
+	/* FolkPatch stability patch: the LKM KPM loader hard-reboots GKI 6.6
+	 * when the KPM init runs (inline-hook engine / trampoline issue, no
+	 * ramoops on this vendor kernel to debug). Return a clean error instead
+	 * of crashing. KPM stays supported via boot-patched kpimg. Remove this
+	 * guard once upstream fixes the LKM loader. */
+	return -ENOSYS;
+#if 0
 	char path[KPM_LOAD_PATH_LEN];
 	char *args;
 	long pathlen = strncpy_from_user(path, upath, sizeof(path));
@@ -36,6 +43,7 @@ long kp_kpm_load_sc(const char __user *upath, const char __user *uargs, void __u
 	long rc = kp_load_module_path(path, arglen <= 0 ? NULL : args, reserved);
 	kfree(args);
 	return rc;
+#endif
 }
 
 long kp_kpm_control_sc(const char __user *uname, const char __user *uctl_args,

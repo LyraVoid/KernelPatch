@@ -305,11 +305,16 @@ int kp_sucompat_hook_init(void)
 		return rc;
 	logki("sucompat: execve hook installed (su path %s -> %s)\n", kp_su_get_path(), KP_SH_PATH);
 
+#if 0 /* FolkPatch stability patch: the getname_flags inline hook fires on every
+       * file open/stat/exec (hottest kernel path) and the trampoline hard-hangs
+       * GKI 6.6 jailbreak insmod. The execve hook above still handles su.
+       * Re-enable once the inline-hook engine is fixed. */
 	rc = kp_hook_getname_flags();
 	if (rc)
 		logkfd("sucompat: getname_flags hook failed: %d\n", rc);
 	else
 		logki("sucompat: getname_flags hook installed\n");
+#endif
 	return 0;
 }
 

@@ -116,9 +116,14 @@ int __init kernelpatch_init(void)
 	 * not installed yet; the supercall handler re-checks per call. */
 	kp_manager_init();
 
+#if 0 /* FolkPatch stability patch: the rename LSM inline hook fires on every
+       * file/dir rename and runs dentry_path_raw()/kp_manager_scan() from the
+       * VFS rename path while its locks are held -> hard hang/reboot on GKI 6.6
+       * jailbreak insmod. Re-enable once the inline-hook engine is fixed. */
 	/* Re-derive the manager uid when the package manager swaps in a fresh
 	 * packages.list (e.g. after the manager app is updated/reinstalled). */
 	hook_rename_lsm();
+#endif
 
 	logki("KernelPatch LKM ready\n");
 	return 0;
