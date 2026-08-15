@@ -56,6 +56,7 @@ void module_init();
 void syscall_init();
 int kstorage_init();
 int su_compat_init();
+int selinux_hide_init();
 int folkpatch_pathhide_init(void);
 int folkpatch_netisolate_init(void);
 
@@ -92,6 +93,9 @@ static void before_rest_init(hook_fargs4_t *args, void *udata)
 
     rc = su_compat_init();
     log_boot("su_compat_init done: %d\n", rc);
+
+    rc = selinux_hide_init();
+    log_boot("selinux_hide_init done: %d\n", rc);
 
     /* Path hiding is optional; a missing hook must not block boot. */
     rc = folkpatch_pathhide_init();
