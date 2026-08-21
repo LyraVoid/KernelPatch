@@ -22,6 +22,9 @@ long folkpatch_uts_set(const char __user *u_release,
                        const char __user *u_version);
 long folkpatch_uts_reset(void);
 
+long folkpatch_report_event(const char __user *event,
+                            const char __user *args);
+
 long folkpatch_pathhide_add(const char __user *path);
 long folkpatch_pathhide_remove(const char __user *path);
 long folkpatch_pathhide_list(char __user *out, int out_len);

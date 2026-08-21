@@ -4,6 +4,29 @@
 #include <uapi/scdefs.h>
 #include <uapi/asm-generic/errno.h>
 #include <folkpatch_supercall.h>
+#include <user_event.h>
+#include <kputils.h>
+
+#define FOLKPATCH_EVENT_LEN 64
+
+long folkpatch_report_event(const char __user *u_event,
+                            const char __user *u_args)
+{
+    char event[FOLKPATCH_EVENT_LEN];
+    char args[FOLKPATCH_EVENT_LEN];
+    long len;
+
+    if (!u_event) return -EINVAL;
+    len = compat_strncpy_from_user(event, u_event, sizeof(event));
+    if (len <= 0 || len >= sizeof(event)) return -EINVAL;
+
+    args[0] = '\0';
+    if (u_args) {
+        len = compat_strncpy_from_user(args, u_args, sizeof(args));
+        if (len < 0 || len >= sizeof(args)) return -EINVAL;
+    }
+    return report_user_event(event, args);
+}
 
 long folkpatch_supercall(int is_authed, long cmd, long arg1, long arg2,
                          long arg3, long arg4)
@@ -15,6 +38,9 @@ long folkpatch_supercall(int is_authed, long cmd, long arg1, long arg2,
                                  (const char __user *)arg2);
     case SUPERCALL_UTS_RESET:
         return folkpatch_uts_reset();
+    case SUPERCALL_REPORT_EVENT:
+        return folkpatch_report_event((const char __user *)arg1,
+                                      (const char __user *)arg2);
     case SUPERCALL_SU_AUDIT_LIST:
         return folkpatch_suaudit_list((struct su_audit_entry __user *)arg1,
                                       (int)arg2);

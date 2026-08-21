@@ -301,7 +301,7 @@ static long call_kstorage_remove(int gid, long did)
     return remove_kstorage(gid, did);
 }
 
-static long supercall(int is_authed, long cmd, long arg1, long arg2, long arg3, long arg4)
+static long supercall(int is_authed, int is_su, long cmd, long arg1, long arg2, long arg3, long arg4)
 {
     switch (cmd) {
     case SUPERCALL_HELLO:
@@ -378,6 +378,11 @@ static long supercall(int is_authed, long cmd, long arg1, long arg2, long arg3, 
         break;
     }
 
+    /* FolkPatch-owned controls have their own SU-aware authorization rule. */
+    if (folkpatch_supercall_cmd(cmd)) {
+        return folkpatch_supercall(is_authed || is_su, cmd, arg1, arg2, arg3, arg4);
+    }
+
     if (!is_authed) return -EPERM;
 
     switch (cmd) {
@@ -388,10 +393,6 @@ static long supercall(int is_authed, long cmd, long arg1, long arg2, long arg3, 
     case SUPERCALL_SKEY_ROOT_ENABLE:
         return call_skey_root_enable((int)arg1);
         break;
-    }
-
-    if (folkpatch_supercall_cmd(cmd)) {
-        return folkpatch_supercall(is_authed, cmd, arg1, arg2, arg3, arg4);
     }
 
     switch (cmd) {
@@ -478,7 +479,7 @@ static void before(hook_fargs6_t *args, void *udata)
     long a4 = (long)syscall_argn(args, 5);
 
     args->skip_origin = 1;
-    args->ret = supercall(is_authed, cmd, a1, a2, a3, a4);
+    args->ret = supercall(is_authed, is_su, cmd, a1, a2, a3, a4);
 }
 
 int supercall_install()

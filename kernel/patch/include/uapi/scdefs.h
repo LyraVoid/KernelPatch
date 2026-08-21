@@ -58,6 +58,9 @@ static inline long hash_key(const char *key)
 #define SUPERCALL_NETISOLATE_UID_LIST 0x1074
 #define SUPERCALL_NETISOLATE_UID_CLEAR 0x1075
 
+/* Report APD boot stages without a nested SUPERCMD exec. */
+#define SUPERCALL_REPORT_EVENT 0x1080
+
 
 #define SUPERCALL_SKEY_GET 0x100a
 #define SUPERCALL_SKEY_SET 0x100b
