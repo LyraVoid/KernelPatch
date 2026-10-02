@@ -29,8 +29,17 @@ void print_bootlog()
             printk("KP %s", buf);
             off = 0;
         } else {
+            if (off == sizeof(buf) - 2) {
+                buf[off] = '\0';
+                printk("KP %s", buf);
+                off = 0;
+            }
             buf[off++] = log[i];
         }
+    }
+    if (off) {
+        buf[off] = '\0';
+        printk("KP %s", buf);
     }
 }
 

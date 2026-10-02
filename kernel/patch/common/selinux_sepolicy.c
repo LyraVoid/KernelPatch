@@ -705,19 +705,26 @@ static bool g_load_hook_installed;
 /* Idempotent: installed from the boot-time init so the platform policy loads
  * (first and second stage init) are seen; the post-fs-data init calls it too
  * in case the boot-time call could not resolve the symbol yet. */
-static void kp_install_load_hook(void)
+static int kp_install_load_hook(void)
 {
     unsigned long addr;
+    hook_err_t rc;
 
-    if (g_load_hook_installed || !selinux_sepolicy_supported()) return;
+    if (g_load_hook_installed) return 0;
+    if (!selinux_sepolicy_supported()) return -EOPNOTSUPP;
     addr = lookup_name_with_suffix("security_load_policy");
-    if (!addr) return;
+    if (!addr) return -ENOENT;
     if (kver >= KP_SEPOLICY_WITH_POLICY_MIN_VERSION)
-        hook_wrap3((void *)addr, NULL, after_security_load_policy_3, NULL);
+        rc = hook_wrap3((void *)addr, NULL, after_security_load_policy_3, NULL);
     else
-        hook_wrap4((void *)addr, NULL, after_security_load_policy_4, NULL);
+        rc = hook_wrap4((void *)addr, NULL, after_security_load_policy_4, NULL);
+    if (rc) {
+        log_boot("selinux_sepolicy: security_load_policy hook failed: %d\n", rc);
+        return rc;
+    }
     g_load_hook_installed = true;
     log_boot("selinux_sepolicy: hooked security_load_policy @ %llx\n", addr);
+    return 0;
 }
 
 /* Called as early as possible (before_rest_init): the policy is loaded by
@@ -725,8 +732,7 @@ static void kp_install_load_hook(void)
 int selinux_sepolicy_boot_init(void)
 {
     if (!selinux_sepolicy_supported()) return -EOPNOTSUPP;
-    kp_install_load_hook();
-    return 0;
+    return kp_install_load_hook();
 }
 
 static void kp_log_blob_diag(const char *tag, const void *blob, size_t len)
@@ -972,6 +978,9 @@ u32 selinux_sepolicy_clean_seq(void)
 int selinux_sepolicy_init(void)
 {
     unsigned long addr;
+    int rc;
+    static bool compute_hook_installed;
+    static bool context_hook_installed;
 
     if (!selinux_sepolicy_supported()) {
         log_boot("selinux_sepolicy: requires kernel >= 4.19 (kver %x)\n", kver);
@@ -998,13 +1007,19 @@ int selinux_sepolicy_init(void)
     /* Only the argument-redirect hooks are needed: the deep copy is consumed by
      * swapping the policydb argument while an app query runs. */
     addr = lookup_name_with_suffix("context_struct_compute_av");
-    if (addr) {
-        hook_wrap6((void *)addr, before_context_struct_compute_av, NULL, NULL);
+    if (!addr) return -ENOENT;
+    if (!compute_hook_installed) {
+        rc = hook_wrap6((void *)addr, before_context_struct_compute_av, NULL, NULL);
+        if (rc) return rc;
+        compute_hook_installed = true;
         log_boot("selinux_sepolicy: hooked context_struct_compute_av @ %llx\n", addr);
     }
     addr = lookup_name_with_suffix("string_to_context_struct");
-    if (addr) {
-        hook_wrap5((void *)addr, before_string_to_context_struct, NULL, NULL);
+    if (!addr) return -ENOENT;
+    if (!context_hook_installed) {
+        rc = hook_wrap5((void *)addr, before_string_to_context_struct, NULL, NULL);
+        if (rc) return rc;
+        context_hook_installed = true;
         log_boot("selinux_sepolicy: hooked string_to_context_struct @ %llx\n", addr);
     }
 
@@ -1012,14 +1027,8 @@ int selinux_sepolicy_init(void)
      * full platform policy and not from an earlier (or later, patched) epoch.
      * ABI: >= 6.4 (data, len, load_state); before that
      * (state, data, len, load_state). */
-    addr = lookup_name_with_suffix("security_load_policy");
-    if (addr) {
-        if (kver >= KP_SEPOLICY_WITH_POLICY_MIN_VERSION)
-            hook_wrap3((void *)addr, NULL, after_security_load_policy_3, NULL);
-        else
-            hook_wrap4((void *)addr, NULL, after_security_load_policy_4, NULL);
-        log_boot("selinux_sepolicy: hooked security_load_policy @ %llx\n", addr);
-    }
+    rc = kp_install_load_hook();
+    if (rc) return rc;
 
 
     log_boot("selinux_sepolicy: read=%llx str2ctx=%llx sidtab2sid=%llx search=%llx\n",
