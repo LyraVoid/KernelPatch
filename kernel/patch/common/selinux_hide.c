@@ -41,6 +41,7 @@
 #include <linux/cred.h>
 #include <linux/string.h>
 #include <asm/current.h>
+#include <asm/atomic.h>
 #include <uapi/asm-generic/errno.h>
 #include <security/selinux/include/security.h>
 #include <security/selinux/include/avc.h>
@@ -66,8 +67,6 @@ extern int android_is_safe_mode;
 #define KP_SECURITY__COMPUTE_AV (1U << 0)
 #define KP_SECURITY__CHECK_CONTEXT (1U << 3)
 #define KP_PROCESS__SETCURRENT (1U << 24)
-#define SEL_WRITE_OP_CONTEXT 5
-#define SEL_WRITE_OP_ACCESS 6
 /* struct selinux_kernel_status (20 bytes) */
 #define KP_SELINUX_KERNEL_STATUS_VERSION 1
 #define KP_SELINUX_STATUS_SIZE 20
@@ -105,8 +104,7 @@ static sel_mmap_status_fn orig_sel_mmap_handle_status;
 static unsigned char fake_status_bytes[KP_SELINUX_STATUS_SIZE];
 static void *fake_status_vaddr; /* vmalloc'd page mapped for uid >= 10000 */
 
-static unsigned long g_hooked[8];
-static int g_hooked_cnt;
+static atomic_t selinux_hide_control_busy = ATOMIC_INIT(0);
 
 
 
@@ -217,6 +215,7 @@ static void init_fake_status(void)
         logkfw("selinux_hide: vmalloc unavailable, fake status disabled\n");
         return;
     }
+    lib_memset(p, 0, KP_PAGE_SIZE);
     lib_memcpy(p, fake_status_bytes, sizeof(fake_status_bytes));
     fake_status_vaddr = p;
     logkfi("selinux_hide: fake status page ready (%x)\n", kver);
@@ -252,7 +251,7 @@ static ssize_t my_write_context(struct file *file, char *buf, size_t size)
 
     kp_qlog("context_write", uid, buf, size);
 
-    if (likely(uid < 10000)) {
+    if (likely(!READ_ONCE(selinux_hide_enabled) || uid < 10000)) {
         ret = orig_context_write(file, buf, size);
         if (ret > 0){ 
             kp_qlog("context_answer", uid, buf, (size_t)ret);
@@ -369,7 +368,7 @@ static ssize_t my_write_access(struct file *file, char *buf, size_t size)
 
     kp_qlog("access_write", uid, buf, size);
 
-    if (likely(uid < 10000)) {
+    if (likely(!READ_ONCE(selinux_hide_enabled) || uid < 10000)) {
         ret = orig_access_write(file, buf, size);
         if (ret > 0) {
             kp_qlog("access_answer", uid, buf, (size_t)ret);
@@ -521,7 +520,7 @@ static int my_setprocattr(const char *name, void *value, size_t size)
                name ? name : "(null)", vbuf);
     }
 
-    if (likely(uid < 10000)) goto call_orig;
+    if (likely(!READ_ONCE(selinux_hide_enabled) || uid < 10000)) goto call_orig;
     if (lib_strcmp(name, "current")) goto call_orig;
     if (!kfunc(avc_has_perm) || !selinux_has_selinux_state()) goto call_orig;
 
@@ -549,7 +548,7 @@ static ssize_t my_sel_read_handle_status(struct file *filp, char __user *buffer,
                (unsigned int)count, (unsigned int)(ppos ? *ppos : 0));
     }
 
-    if (selinux_hide_enabled && uid >= 10000) {
+    if (READ_ONCE(selinux_hide_enabled) && uid >= 10000) {
         loff_t pos = ppos ? *ppos : 0;
         size_t avail;
 
@@ -574,7 +573,7 @@ static int my_sel_mmap_handle_status(struct file *filp,
 
     kp_qlog_plain("status_mmap", uid);
 
-    if (selinux_hide_enabled && uid >= 10000 &&
+    if (READ_ONCE(selinux_hide_enabled) && uid >= 10000 &&
         fake_status_vaddr && kp_remap_pfn_range) {
 
         unsigned long *vm = (unsigned long *)vma;
@@ -585,6 +584,7 @@ static int my_sel_mmap_handle_status(struct file *filp,
 
         start = vm[KP_VMA_VM_START_OFF / sizeof(unsigned long)];
         prot = vm[kp_vma_page_prot_off() / sizeof(unsigned long)];
+        if (!kp_pgprot_plausible(prot)) goto real_page;
 
         pa = pgtable_phys_kernel((uintptr_t)fake_status_vaddr);
 
@@ -624,122 +624,41 @@ real_page:
     return orig_sel_mmap_handle_status(filp, vma);
 }
 
-/* ---- hook install / uninstall ---- */
+/* ---- resident hook installation ---- */
 
 static int kp_install_hook(unsigned long func, void *replace, void **backup, const char *name)
 {
     if (!func) return -ENOENT;
+    // Installed hooks live until reboot; retries reuse their original trampoline.
+    if (*backup) return 0;
     hook_err_t err = hook((void *)func, replace, backup);
     if (err != HOOK_NO_ERR) {
+        // hook() sets backup before relocation, then frees it on failure.
+        *backup = NULL;
         logkfw("selinux_hide: hook %s @ %llx error: %d\n", name, func, err);
         return err;
     }
-    if (g_hooked_cnt < (int)(sizeof(g_hooked) / sizeof(g_hooked[0]))) g_hooked[g_hooked_cnt++] = func;
     logkfi("selinux_hide: hooked %s @ %llx\n", name, func);
     return 0;
-}
-
-/* ---- data-pointer (KernelSU-style) hooks ----
- *
- * selinuxfs dispatches through data structures -- the write_op[] table and the
- * status file_operations -- so the handlers can be replaced by rewriting a
- * pointer slot.  No kernel text is modified that way, which is what keeps
- * these invisible to text-integrity checks; only the (verified) slot changes.
- *
- * Member offsets differ per kernel version, so nothing is hardcoded: the
- * write_op[] indices are confirmed against the resolved handler symbols before
- * use, and the status slots are located by scanning the ops struct for the
- * resolved handler address.  Anything unverified falls back to the old inline
- * hook so behaviour never regresses silently.
- */
-
-#define KP_MAX_FP_HOOKS 8
-static uintptr_t g_fp_slot[KP_MAX_FP_HOOKS];
-static void *g_fp_orig[KP_MAX_FP_HOOKS];
-static int g_fp_cnt;
-
-static int kp_install_fp_slot(uintptr_t slot, void *replace, void **backup, const char *name)
-{
-    if (!slot) return -ENOENT;
-    fp_hook(slot, replace, backup);
-    if (g_fp_cnt < KP_MAX_FP_HOOKS) {
-        g_fp_slot[g_fp_cnt] = slot;
-        g_fp_orig[g_fp_cnt] = *backup;
-        g_fp_cnt++;
-    }
-    logkfi("selinux_hide: fp-hooked (data) %s @ slot %llx -> %llx\n", name, (unsigned long)slot,
-           (unsigned long)replace);
-    return 0;
-}
-
-
-static uintptr_t kp_found_write_op_slot(unsigned long write_op, unsigned long index)
-{
-    sel_write_op_fn *w = (sel_write_op_fn *)write_op;
-    if (!write_op || is_bad_address((void *)write_op) || !index) return 0;
-    if (!is_bad_address(&w[index])) return (uintptr_t)&w[index];
-    return 0;
-}
-
-static uintptr_t kp_find_fops_slot(unsigned long ops, unsigned long index)
-{
-    unsigned long *p = (unsigned long *)ops;
-    if (!ops || is_bad_address((void *)ops) || !index) return 0;
-    if (!is_bad_address(&p[index])) return (uintptr_t)&p[index];
-    return 0;
-}
-
-static void kp_uninstall_hooks(void)
-{
-    for (int i = g_hooked_cnt - 1; i >= 0; i--) {
-        if (g_hooked[i]) unhook((void *)g_hooked[i]);
-        g_hooked[i] = 0;
-    }
-    g_hooked_cnt = 0;
-    for (int i = g_fp_cnt - 1; i >= 0; i--) {
-        if (g_fp_slot[i]) fp_unhook(g_fp_slot[i], g_fp_orig[i]);
-        g_fp_slot[i] = 0;
-        g_fp_orig[i] = NULL;
-    }
-    g_fp_cnt = 0;
-
-    orig_context_write = NULL;
-    orig_access_write = NULL;
-    orig_setprocattr = NULL;
-    orig_sel_read_handle_status = NULL;
-    orig_sel_mmap_handle_status = NULL;
 }
 
 static int selinux_hide_install_hooks(void)
 {
     int rc;
-    unsigned long write_op, status_ops;
-    uintptr_t slot;
+
+    /* Never guess write_op[] or file_operations offsets. A valid address is
+     * not proof of a matching callback ABI. Missing symbols fail cleanly. */
+    if (!sel_write_context_addr || !sel_write_access_addr || !selinux_setprocattr_addr ||
+        !sel_read_handle_status_addr || !sel_mmap_handle_status_addr) return -ENOENT;
 
     fill_fake_status_bytes();
     init_fake_status();
 
-    write_op = lookup_name_with_suffix("write_op");
-    status_ops = lookup_name_with_suffix("sel_handle_status_ops");
-    log_boot("selinux_hide: write_op=%llx status_ops=%llx ctx=%llx acc=%llx rd=%llx mmap=%llx\n",
-             write_op, status_ops, sel_write_context_addr, sel_write_access_addr,
-             sel_read_handle_status_addr, sel_mmap_handle_status_addr);
-
-    // https://android.googlesource.com/kernel/common/+/refs/heads/android13-5.10/security/selinux/selinuxfs.c?utm_source=chatgpt.com
-    // enum sel_inos 
     if (sel_write_context_addr) {
         rc = kp_install_hook(sel_write_context_addr, (void *)my_write_context, (void **)&orig_context_write,
                              "sel_write_context");
         log_boot("selinux_hide: installed hook for sel_write_context\n");
         if (rc) goto err;
-    }else{
-        slot = kp_found_write_op_slot(write_op, SEL_WRITE_OP_CONTEXT);
-        if (slot) {
-            kp_install_fp_slot(slot, (void *)my_write_context, (void **)&orig_context_write,"sel_write_context");
-            log_boot("selinux_hide: installed fp slot for sel_write_context\n");
-        }else{
-            log_boot("selinux_hide: failed to find write_op slot for sel_write_context\n");
-        }
     }
 
     if (sel_write_access_addr) {
@@ -747,14 +666,6 @@ static int selinux_hide_install_hooks(void)
                              "sel_write_access");
         log_boot("selinux_hide: installed hook for sel_write_access\n");
         if (rc) goto err;
-    }else{
-        slot = kp_found_write_op_slot(write_op, SEL_WRITE_OP_ACCESS);
-        if (slot) {
-            kp_install_fp_slot(slot, (void *)my_write_access, (void **)&orig_access_write,"sel_write_access");
-            log_boot("selinux_hide: installed fp slot for sel_write_access\n");
-        }else{
-            log_boot("selinux_hide: failed to find write_op slot for sel_write_access\n");
-        }
     }
 
     /* setprocattr is reached through the LSM hook list (no data slot we can
@@ -767,49 +678,24 @@ static int selinux_hide_install_hooks(void)
     }
 
 
-    /* status read/mmap: data-pointer hooks in the status file_operations. */
-
-    // https://android.googlesource.com/kernel/common/%2B/d2f7eca60b29006285d57c7035539e33300e89e5/include/linux/fs.h
-    // struct file_operations {
+    /* Status read/mmap use resolved handlers, never guessed data slots. */
 
     if (sel_read_handle_status_addr){
         rc = kp_install_hook(sel_read_handle_status_addr, (void *)my_sel_read_handle_status,
                              (void **)&orig_sel_read_handle_status, "sel_read_handle_status");
         log_boot("selinux_hide: installed hook for sel_read_handle_status\n");
         if (rc) goto err;
-    }else{
-        // ssize_t (*write) (struct file *, const char __user *, size_t, loff_t *);
-        slot = kp_find_fops_slot(status_ops, 3);
-        if (slot) {
-            rc = kp_install_fp_slot(slot, (void *)my_sel_read_handle_status, (void **)&orig_sel_read_handle_status,
-                                    "sel_read_handle_status");
-            if (rc) goto err;
-            log_boot("selinux_hide: installed fops slot for sel_read_handle_status\n");
-        } else {
-            log_boot("selinux_hide: failed to find fops slot for sel_read_handle_status\n");
-        }
-
     }
     if (sel_mmap_handle_status_addr){
         rc = kp_install_hook(sel_mmap_handle_status_addr, (void *)my_sel_mmap_handle_status,
                              (void **)&orig_sel_mmap_handle_status, "sel_mmap_handle_status");
         log_boot("selinux_hide: installed hook for sel_mmap_handle_status\n");
         if (rc) goto err;
-    }else{
-        // int (*mmap) (struct file *, struct vm_area_struct *);
-        slot = kp_find_fops_slot(status_ops, 12);
-        if (slot) {
-            rc = kp_install_fp_slot(slot, (void *)my_sel_mmap_handle_status, (void **)&orig_sel_mmap_handle_status,
-                                    "sel_mmap_handle_status");
-            if (rc) goto err;
-            log_boot("selinux_hide: installed fops slot for sel_mmap_handle_status\n");
-        } else {
-            log_boot("selinux_hide: failed to find fops slot for sel_mmap_handle_status\n");
-        }
     }
     return 0;
 err:
-    kp_uninstall_hooks();
+    /* Leave partial installs resident and passing through. Removing/freeing a
+     * trampoline here races with callers already executing it on other CPUs. */
     return rc;
 }
 
@@ -825,33 +711,36 @@ int selinux_hide_enable(void)
         logkfw("selinux_hide: kernel %x < 4.19, feature not supported\n", kver);
         return -EOPNOTSUPP;
     }
-    if (selinux_hide_enabled) return 0;
+    if (atomic_cmpxchg(&selinux_hide_control_busy, 0, 1)) return -EBUSY;
+    if (READ_ONCE(selinux_hide_enabled)) {
+        atomic_xchg(&selinux_hide_control_busy, 0);
+        return 0;
+    }
 
     rc = selinux_hide_install_hooks();
-    if (rc) return rc;
-
-    selinux_hide_enabled = true;
-    logkfi("selinux_hide: enabled\n");
-    return 0;
+    if (!rc) {
+        smp_mb();
+        WRITE_ONCE(selinux_hide_enabled, true);
+        logkfi("selinux_hide: enabled\n");
+    }
+    atomic_xchg(&selinux_hide_control_busy, 0);
+    return rc;
 }
 
 int selinux_hide_disable(void)
 {
-    if (!selinux_hide_enabled) return 0;
-
-    kp_uninstall_hooks();
-    if (fake_status_vaddr) {
-        kp_vfree(fake_status_vaddr);
-        fake_status_vaddr = NULL;
-    }
-    selinux_hide_enabled = false;
+    if (atomic_cmpxchg(&selinux_hide_control_busy, 0, 1)) return -EBUSY;
+    /* Keep the five trampolines and the status page until reboot. The page can
+     * still be mapped by an app; freeing it would also invalidate that mapping. */
+    WRITE_ONCE(selinux_hide_enabled, false);
+    atomic_xchg(&selinux_hide_control_busy, 0);
     logkfi("selinux_hide: disabled\n");
     return 0;
 }
 
 int selinux_hide_is_enabled(void)
 {
-    return selinux_hide_enabled;
+    return READ_ONCE(selinux_hide_enabled);
 }
 
 long selinux_hide_control(int state)
@@ -880,7 +769,7 @@ long selinux_hide_control(int state)
         break;
     }
 
-    if (state < 0) return selinux_hide_enabled ? 1 : 0; /* query: on / off */
+    if (state < 0) return READ_ONCE(selinux_hide_enabled) ? 1 : 0; /* query: on / off */
     if (state) return selinux_hide_enable();
     return selinux_hide_disable();
 }
@@ -901,13 +790,15 @@ int selinux_hide_post_fs_data(const char *args)
 
             /* Resolve ss/ symbols FIRST: the snapshot below needs the resolved
              * kp_policydb_read/kp_policydb_load_isids. */
-            selinux_hide_init();
+            int irc = selinux_hide_init();
+            if (irc) return irc;
 
             /* The live policy is still the untouched boot policy here: deep-copy
              * it so the context/access/setprocattr hooks answer against the clean
              * policy even after apd/Magisk reloads it. */
             int src = selinux_sepolicy_snapshot();
             log_boot("selinux_sepolicy: snapshot rc=%d\n", src);
+            if (src) return src;
 
             selinux_hide_approved = true;
         }
@@ -936,6 +827,7 @@ unsigned long lookup_name_with_suffix(const char *base)
 
 int selinux_hide_init(void)
 {
+    int rc;
     log_boot("selinux_hide: kernel %x, supported: %d\n", kver, selinux_hide_is_supported());
 
     if (!selinux_hide_is_supported()) return -EOPNOTSUPP;
@@ -959,7 +851,8 @@ int selinux_hide_init(void)
     kfunc(security_context_str_to_sid) =
         (typeof(kfunc(security_context_str_to_sid)))lookup_name_with_suffix("security_context_str_to_sid");
 
-    selinux_sepolicy_init();
+    rc = selinux_sepolicy_init();
+    if (rc) return rc;
 
     kp_security_cred_getsecid = (security_cred_getsecid_fn)kallsyms_lookup_name("security_cred_getsecid");
 
