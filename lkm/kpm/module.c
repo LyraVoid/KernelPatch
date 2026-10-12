@@ -855,15 +855,24 @@ long kp_unload_module(const char *name, void __user *reserved)
 	logkfe("name: %s\n", name);
 
 	rcu_read_lock();
-	long rc = 0;
-
 	struct kp_module *mod = kp_find_module(name);
-	if (!mod) {
-		rc = -ENOENT;
-		goto out;
-	}
-	list_del(&mod->list);
-	rc = kp_call_exit(mod->exit, reserved);
+	if (mod)
+		list_del_rcu(&mod->list);
+	rcu_read_unlock();
+	if (!mod)
+		return -ENOENT;
+
+	/*
+	 * The module exit callback is arbitrary teardown: it may sleep and may
+	 * call synchronize_rcu() (e.g. unregister_break_hook/unregister_step_hook).
+	 * It must therefore run outside the RCU read-side critical section --
+	 * calling synchronize_rcu() while holding rcu_read_lock() self-deadlocks,
+	 * since the grace period cannot end while the caller is itself a reader.
+	 */
+	long rc = kp_call_exit(mod->exit, reserved);
+
+	/* Drain readers that found mod before it was unlinked, then free. */
+	synchronize_rcu();
 
 	if (mod->args)
 		kvfree(mod->args);
@@ -880,9 +889,6 @@ long kp_unload_module(const char *name, void __user *reserved)
 	kfree(mod);
 
 	logkfi("name: %s, rc: %ld\n", name, rc);
-
-out:
-	rcu_read_unlock();
 	return rc;
 }
 
@@ -1075,8 +1081,10 @@ int kp_get_module_info(const char *name, char *out_info, int size)
 	rcu_read_lock();
 
 	struct kp_module *mod = kp_find_module(name);
-	if (!mod)
+	if (!mod) {
+		rcu_read_unlock();
 		return -ENOENT;
+	}
 
 	int sz = snprintf(out_info, size - 1,
 			  "name=%s\n"
